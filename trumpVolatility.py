@@ -112,11 +112,11 @@ myData.drop_duplicates(inplace=True)
 # June 16th 2015 is the day Trump announced his campaign. Let's start here
 myData = myData.loc['2015-06-16':]
 
-# refine our data to just texts that are filled in (no retweets) here
+# let's refine our data to just texts that are filled in (no retweets) here
 myData.dropna(subset=['text'], inplace=True)
 
 # let's drop all rows with text in the format "@USERNAME:"
-# these are other people tweeting Trump, not his direct tweets
+# these are other people tweeting @ing him, not his direct tweets
 myData = myData[~myData['text'].str.contains(r"\@.*:")]
 
 # we want to create a variable that counts the number of all caps words in a tweet
@@ -125,6 +125,17 @@ myData = myData[~myData['text'].str.contains(r"\@.*:")]
 allCaps = r'\b[A-Z]+\b'
 myData['allCaps'] = myData['text'].str.count(allCaps)
 print(myData['allCaps'].max())
+
+# TODO: Before you do any of the shit below you need to
+#  just make this shit a function that does the same shit
+#  as above and takes a regex string and a column name as
+#  inputs then spits out what you want for each column... and shit
+
+# TODO: create a count of all exclamation points
+
+# TODO: create a count of all hash tags
+
+# TODO: create a count of all other user mentions
 
 # let's make another variable that is the number of words in a tweet
 myData['tweetWordCount'] = myData['text'].str.count(r'\b[A-Za-z]+\b')
