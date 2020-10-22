@@ -25,7 +25,7 @@ from nltk.stem import WordNetLemmatizer
 from nltk import pos_tag
 from wordcloud import WordCloud, ImageColorGenerator
 from PIL import Image
-from nltk.tokenize.treebank import TreebankWordDetokenizer
+from scipy.ndimage import gaussian_gradient_magnitude
 
 
 
@@ -113,11 +113,11 @@ myData.drop_duplicates(inplace=True)
 # June 16th 2015 is the day Trump announced his campaign. Let's start here
 myData = myData.loc['2015-06-16':]
 
-# refine our data to just texts that are filled in (no retweets) here
+# let's refine our data to just texts that are filled in (no retweets) here
 myData.dropna(subset=['text'], inplace=True)
 
 # let's drop all rows with text in the format "@USERNAME:"
-# these are other people tweeting Trump, not his direct tweets
+# these are other people tweeting @ing him, not his direct tweets
 myData = myData[~myData['text'].str.contains(r"\@.*:")]
 
 # we want to create a variable that counts the number of all caps words in a tweet
@@ -126,6 +126,17 @@ myData = myData[~myData['text'].str.contains(r"\@.*:")]
 allCaps = r'\b[A-Z]+\b'
 myData['allCaps'] = myData['text'].str.count(allCaps)
 print(myData['allCaps'].max())
+
+# TODO: Before you do any of the shit below you need to
+#  just make this shit a function that does the same shit
+#  as above and takes a regex string and a column name as
+#  inputs then spits out what you want for each column... and shit
+
+# TODO: create a count of all exclamation points
+
+# TODO: create a count of all hash tags
+
+# TODO: create a count of all other user mentions
 
 # let's make another variable that is the number of words in a tweet
 myData['tweetWordCount'] = myData['text'].str.count(r'\b[A-Za-z]+\b')
@@ -318,11 +329,10 @@ imagePath = r"C:\Users\sebid\OneDrive\Desktop\trump-2069581_1280.png"
 
 trumpMask = np.array(Image.open(imagePath))
 trumpColors = ImageColorGenerator(trumpMask)
-print(trumpMask)
-
 
 # let's do a wordcloud of the words used by Trump's tweets
 tweetCloud = WordCloud(background_color='gray',
+                       max_words=1000,
                        mask=trumpMask,
                        contour_width=1,
                        contour_color='orange',
@@ -332,13 +342,32 @@ plt.axis('off')
 plt.title("Most popular words in Trump's Tweets")
 plt.show()
 
-# let's do a wordcloud of the nouns used by Trump's tweets
+# let's do a wordcloud of the nouns used by Trump's tweets, with a different picture
+imagePath = r"C:\Users\sebid\OneDrive\Desktop\Donald_Trump_(25320945544).jpg"
+
+# create image colors with a 3 level subsampling
+# source code to do this edge finding stuff: https://amueller.github.io/word_cloud/auto_examples/parrot.html
+trumpColors = np.array(Image.open(imagePath))
+trumpColors = trumpColors[::3, ::3]
+
+# create trump mask
+trumpMask = trumpColors.copy()
+
+# do some edge detection
+trumpEdges = np.mean([gaussian_gradient_magnitude(trumpColors[:, :, i] / 255., 2) for i in range(3)], axis=0)
+trumpMask[trumpEdges > .08] = 255
+print(trumpMask)
+
 tweetCloud = WordCloud(background_color='gray',
+                       max_words=2000,
                        mask=trumpMask,
                        contour_width=1,
-                       contour_color='orange',
-                       color_func=trumpColors).generate_from_frequencies(allTextNounCount)
-plt.imshow(tweetCloud, interpolation='bilinear')
+                       contour_color='orange').generate_from_frequencies(allTextNounCount)
+
+# add colors
+trumpColors = ImageColorGenerator(trumpColors)
+tweetCloud.recolor(color_func=trumpColors)
+plt.imshow(tweetCloud, interpolation="bilinear")
 plt.axis('off')
 plt.title("Most popular nouns in Trump's tweets")
 plt.show()
