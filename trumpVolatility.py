@@ -9,8 +9,9 @@
 ###############################################
 
 
-# The purpose of this project is to gage what affect, if any,
+# The purpose of this project is to gauge what affect, if any,
 # Trump's tweets may have on market volatility
+# we will use tweet data to predict if volatility goes up
 
 # import libraries
 import pandas as pd
@@ -26,6 +27,17 @@ from nltk import pos_tag
 from wordcloud import WordCloud, ImageColorGenerator
 from PIL import Image
 from scipy.ndimage import gaussian_gradient_magnitude
+import yfinance as yf
+from datetime import timezone
+from sklearn.model_selection import train_test_split
+import seaborn as sns
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import plot_roc_curve
 
 
 
@@ -34,11 +46,24 @@ from scipy.ndimage import gaussian_gradient_magnitude
 # Data Gathering #
 ##################
 
+
+
+
+
 # json files sourced from https://github.com/bpb27/trump_tweet_data_archive
 df2015 = pd.read_json(r"C:\Users\sebid\OneDrive\Desktop\master_2015.json")
 df2016 = pd.read_json(r"C:\Users\sebid\OneDrive\Desktop\master_2016.json")
 df2017 = pd.read_json(r"C:\Users\sebid\OneDrive\Desktop\master_2017.json")
 df2018 = pd.read_json(r"C:\Users\sebid\OneDrive\Desktop\master_2018.json")
+
+# gather our VIX data using Yahoo Finance API
+tickerRetrieve = yf.Ticker('^VIX')
+VIXdf = pd.DataFrame(tickerRetrieve.history(period='max')['Close'])
+VIXdf.rename(columns={'Close' : 'VIX_Daily_Close'}, inplace=True)
+
+# convert the timeseries to UTC
+VIXdf = VIXdf.tz_localize(timezone.utc)
+
 
 
 
@@ -46,6 +71,13 @@ df2018 = pd.read_json(r"C:\Users\sebid\OneDrive\Desktop\master_2018.json")
 # Data Cleaning ####
 ####################
 
+
+# let's start with cleaning our VIX data frame since it is smaller
+# we want to determine if the Volatility is higher than it
+# was the day before.
+VIXdf['volatilityUp'] = VIXdf['VIX_Daily_Close'] - VIXdf['VIX_Daily_Close'].shift()
+VIXdf['volatilityUp'] = np.where(VIXdf['volatilityUp'] >= 0, 1, 0)
+VIXdf.drop(columns=['VIX_Daily_Close'], inplace=True)
 
 
 # we're just going to do all of these in a for loop to save time
@@ -85,6 +117,8 @@ df2016.drop(columns=['scopes',
 # quoted_status_id_str is not a string, let's change it to a string and then drop quoted_status_id
 # quoted_status contains a tweet object for any tweet that is a quote, don't think we are going to use that
 # entities is a dict we are dropping
+# all of the id strings don't really serve our purpose
+# possibly sensitive is a whole bunch of NA values and couldn't find too much documentation on this variable
 for df in dfList:
     df.set_index('created_at', inplace=True)
     df.drop(columns=['contributors',
@@ -100,18 +134,41 @@ for df in dfList:
                      'extended_entities',
                      'quoted_status_id',
                      'quoted_status',
-                     'entities'], inplace=True)
-    df['id_str'] = df['id_str'].astype('str')
-    df['in_reply_to_user_id_str'] = df['in_reply_to_user_id_str'].astype('str')
-    df['in_reply_to_status_id_str'] = df['in_reply_to_status_id_str'].astype('str')
-    df['quoted_status_id_str'] = df['quoted_status_id_str'].astype('str')
+                     'entities',
+                     'source',
+                     'in_reply_to_screen_name',
+                     'id_str',
+                     'in_reply_to_user_id_str',
+                     'in_reply_to_status_id_str',
+                     'quoted_status_id_str',
+                     'possibly_sensitive'], inplace=True)
 
 # now let's append our dataframes to make a big one
 myData = df2015.append(dfList[1:]).sort_index()
 myData.drop_duplicates(inplace=True)
 
+# let's transfer the truncated column to an int64 to get it ready for the machine learning process
+myData['truncated'] = myData['truncated'].astype(int)
+
+# let's repeat this process for is_quote_status
+myData['is_quote_status'] = myData['is_quote_status'].astype(int)
+
+# and same as above for retweeted
+myData['retweeted'] = myData['retweeted'].astype(int)
+print(myData.info())
+
+# Now let's join our VIX Data to our tweet data
+myData = myData.merge(VIXdf, how='outer', left_index=True, right_index=True)
+
 # June 16th 2015 is the day Trump announced his campaign. Let's start here
 myData = myData.loc['2015-06-16':]
+
+# we are going to forward fill the closing values for every day
+# note that the closing values occur at market close, while these show
+# the value as occuring at 0:00 of that day
+# thus the tweets will be predictive of the closing direction for that day
+myData['volatilityUp'].fillna(method='ffill', inplace=True)
+myData['volatilityUp'] = myData['volatilityUp'].astype('category')
 
 # let's refine our data to just texts that are filled in (no retweets) here
 myData.dropna(subset=['text'], inplace=True)
@@ -120,26 +177,36 @@ myData.dropna(subset=['text'], inplace=True)
 # these are other people tweeting @ing him, not his direct tweets
 myData = myData[~myData['text'].str.contains(r"\@.*:")]
 
+# this function outputs a column per regex search count, see below
+def regexCountColumn(regex, df, newColumnName):
+    df[newColumnName] = df['text'].str.count(regex)
+
 # we want to create a variable that counts the number of all caps words in a tweet
 # this might be an indication of strong emotional, or more volatile behavior
 # we'll do this with a regex search for all all caps words
 allCaps = r'\b[A-Z]+\b'
-myData['allCaps'] = myData['text'].str.count(allCaps)
+regexCountColumn(allCaps, myData, 'allCaps')
 print(myData['allCaps'].max())
 
-# TODO: Before you do any of the shit below you need to
-#  just make this shit a function that does the same shit
-#  as above and takes a regex string and a column name as
-#  inputs then spits out what you want for each column... and shit
+# create a count of all exclamation points
+exclamationPoints = r'!'
+regexCountColumn(allCaps, myData, 'exclamationPoints')
+print(myData['exclamationPoints'].max())
 
-# TODO: create a count of all exclamation points
+# create a count of all hash tags
+hashtags = r'#'
+regexCountColumn(hashtags, myData, 'hashtags')
+print(myData['hashtags'].max())
 
-# TODO: create a count of all hash tags
-
-# TODO: create a count of all other user mentions
+# create a count of all other user mentions
+userHandleCount = r'@[^\s]'
+regexCountColumn(userHandleCount, myData, 'userHandleCount')
+print(myData['userHandleCount'].max())
 
 # let's make another variable that is the number of words in a tweet
-myData['tweetWordCount'] = myData['text'].str.count(r'\b[A-Za-z]+\b')
+tweetWordCount = r'\b[A-Za-z]+\b'
+regexCountColumn(tweetWordCount, myData, 'tweetWordCount')
+print(myData['tweetWordCount'].max())
 
 # before we tokenize our words let's change contractions to full words
 myData['noContractions'] = myData['text'].apply(contractions.fix)
@@ -199,9 +266,39 @@ myData['lemmatizedTokens'] = myData['noPunctTokens'].apply(listLemmatize)
 myData.drop(columns='noPunctTokens', inplace=True)
 print(myData['lemmatizedTokens'].head())
 
+
+
+
+#########################
+### Train Test Split ####
+#########################
+
+
+
+# before we do any counting of words for the bag of words approach below
+# we should split our data into train and test, as we want to avoid
+# over-fitting our feature engineering to our data in addition to
+# over-fitting it to our model
+
+# split dependent and independent variables
+y = myData['volatilityUp']
+X = myData.drop(columns=['volatilityUp'])
+
+# here we will randomly split the data into a 70-30 train and test sets
+xTrain, xTest, yTrain, yTest = train_test_split(X, y, random_state=42, test_size=0.3)
+
+print(xTrain.isnull().sum())
+#########################
+## Feature Engineering ##
+#########################
+
+
+
+# TODO: Create column or columns for sentiment analysis results
+
 # we can build a list that contains all of our words in the entire column here
 tokenList = []
-tokenList.extend(myData['lemmatizedTokens'])
+tokenList.extend(xTrain['lemmatizedTokens'])
 # this is a list of lists so I want to make it into a single list here
 tokenList = [item for list in tokenList for item in list]
 print(tokenList[0:100])
@@ -210,9 +307,6 @@ print(tokenList[0:100])
 tokensNouns = pos_tag(tokenList)
 tokensNouns = [token[0] for token in tokensNouns if token[1] == 'NN']
 print(tokensNouns[0:10])
-
-# build a counter for a bag of words approach
-print(myData['lemmatizedTokens'].apply(Counter))
 
 # look over count of all the words
 allTextCount = Counter(tokenList)
@@ -246,7 +340,7 @@ print(allTextNounCountMeltedDF.head())
 # let's go ahead and create a list of every word that appears
 # originally were going to do that but it makes to large of a dataframe for memory
 # instead let's do the top 200 most mentioned nouns to make our dataframe more manageable
-popularNounsList = [word for word in allTextNounCountMeltedDF.nlargest(250, 'Count')['Word']]
+popularNounsList = [word for word in allTextNounCountMeltedDF.nlargest(2500, 'Count')['Word']]
 
 print("Firsts ten entries to popularNounsList: " + str(popularNounsList[0:10]))
 
@@ -256,10 +350,22 @@ def countWords(list, word):
     return list.count(word)
 
 for word in popularNounsList:
-    myData['newCol'] = myData['lemmatizedTokens'].apply(countWords, args=(word, ))
-    myData.rename(columns={'newCol' : word}, inplace=True)
-print(myData.columns)
-print(myData['clinton'].head(10))
+    xTrain['newCol'] = xTrain['lemmatizedTokens'].apply(countWords, args=(word, ))
+    xTrain.rename(columns={'newCol' : word}, inplace=True)
+
+#we need to apply the above to the test data too
+for word in popularNounsList:
+    xTest['newCol'] = xTest['lemmatizedTokens'].apply(countWords, args=(word, ))
+    xTest.rename(columns={'newCol' : word}, inplace=True)
+
+print(xTrain.columns)
+print(xTrain.head(10))
+print(xTrain.info())
+
+# now that we have our counter for our lemmatized tokens and original text, we can drop this column
+dropList = ['lemmatizedTokens', 'text']
+xTrain.drop(columns=dropList, inplace=True)
+xTest.drop(columns=dropList, inplace=True)
 
 
 
@@ -275,9 +381,14 @@ print(myData['clinton'].head(10))
 #
 
 
-myData.info()
+xTrain.info()
 
 # some exploratory questions:
+
+# see if there is significant skew in volatilityUp
+sns.catplot(data=myData, y='volatilityUp', kind='count')
+plt.title('Count of number of days where volatility is up')
+plt.show()
 
 # how often does Trump tweet per day?
 textCountDF = myData.resample('D').apply({'text' : 'count'})
@@ -291,34 +402,38 @@ plt.ylabel('Count of Tweets')
 plt.show()
 
 # a probability distribution of the frequency of trumps tweets per day
-plt.hist(textCountDF.text, bins=40, density=True)
+plt.hist(textCountDF['text'], bins=textCountDF['text'].max(), density=True)
 plt.title('PDF of count of Trump\'s tweets per day')
 plt.ylabel('PDF')
 plt.xlabel('Count of tweets')
 plt.show()
 
 # histogram of the number of all caps words per tweet
-plt.hist(myData['allCaps'], bins=30, density=True)
+plt.hist(myData['allCaps'], bins=myData['allCaps'].max(), density=True)
 plt.title('Probability distribution of the number of all-caps words per Trump tweet')
 plt.xlabel('Number of all caps words per Tweet')
 plt.ylabel('PDF')
-plt.xticks(np.arange(0, 30))
 plt.show()
 
-# let's look at the most common words used in tweets
-# there are obviously a lot of unique words used so let's keep it to like 25ish
-plt.bar(allTextCountMeltedDF['Word'].head(n=20), allTextCountMeltedDF['Count'].head(n=20))
-plt.title("Frequency of all words used in Trump's tweets")
-plt.ylabel('Count')
-plt.xlabel('Word')
+# histogram of the number of exclamation points per tweet
+plt.hist(myData['exclamationPoints'], bins=myData['exclamationPoints'].max(), density=True)
+plt.title('Probability distribution of the number of exclamation points per Trump tweet')
+plt.xlabel('Number of exclamation points per Tweet')
+plt.ylabel('PDF')
 plt.show()
 
-# let's look at the most common nouns used in tweets
-# there are obviously a lot of unique words used so let's keep it to like 25ish
-plt.bar(allTextNounCountMeltedDF['Word'].head(n=20), allTextNounCountMeltedDF['Count'].head(n=20))
-plt.title("Frequency of all nouns used in Trump's tweets")
-plt.ylabel('Count')
-plt.xlabel('Word')
+# histogram of the number of hashtags per tweet
+plt.hist(myData['hashtags'], bins=myData['hashtags'].max(), density=True)
+plt.title('Probability distribution of the number of hashtags per Trump tweet')
+plt.xlabel('Number of all hashtags per Tweet')
+plt.ylabel('PDF')
+plt.show()
+
+# histogram of the number of userHandles per tweet
+plt.hist(myData['userHandleCount'], bins=myData['userHandleCount'].max(), density=True)
+plt.title('Probability distribution of the number of user handle mentions per Trump tweet')
+plt.xlabel('Number of user handle mentions per Tweet')
+plt.ylabel('PDF')
 plt.show()
 
 # let's make our word clouds in the shape of Trump's head because, why not?
@@ -370,4 +485,49 @@ tweetCloud.recolor(color_func=trumpColors)
 plt.imshow(tweetCloud, interpolation="bilinear")
 plt.axis('off')
 plt.title("Most popular nouns in Trump's tweets")
+plt.show()
+
+
+
+###########################################
+###########################################
+##### Model Building ######################
+###########################################
+###########################################
+
+
+
+######################################
+# Baseline Logistic regression model #
+######################################
+
+
+# we are first going to build a baseline logistic regression
+# model that predicts whether volatility goes up or down.
+
+# create a parameter grid for our grid search CV
+paramGrid = {
+    'C' : np.logspace(-4, 4, 20)
+}
+
+# here is a list of tuples for our pipeline steps.
+pipelineSteps = [('scaler', StandardScaler()),
+                 ('gridSearchLogReg', GridSearchCV(LogisticRegression(max_iter=10000), param_grid=paramGrid))]
+
+# establish a pipeline object that will perform the above steps
+pipeline = Pipeline(pipelineSteps)
+
+# create our baseline logistic regression model
+baselineLogReg = pipeline.fit(xTrain, yTrain)
+
+# create our prediction data
+yPred = baselineLogReg.predict(xTest)
+
+# score our baseline logistic regression model
+baselineLogRegScore = accuracy_score(yTest, yPred)
+print("BASELINE LOGISTIC REGRESSION\n ACCURACY SCORE:")
+print(baselineLogRegScore)
+
+# plot ROC curve for our model
+plot_roc_curve(baselineLogReg, xTest, yTest)
 plt.show()
