@@ -9,14 +9,49 @@
 ###############################################
 
 
+
+
+
+
+
+
+
 # The purpose of this project is to gauge what affect, if any,
 # Trump's tweets may have on market volatility
 # we will use tweet data to predict if volatility goes up
 
-# import libraries
+
+
+
+
+
+
+##############################
+##############################
+###### Import Libraries ######
+##############################
+##############################
+
+
+
+# libraries for data cleaning and manipulation frameworks
 import pandas as pd
 import numpy as np
+
+# libraries for parallel processing
+import dask.dataframe as dd
+import dask.array as da
+import multiprocessing
+from dask.distributed import Client, LocalCluster
+
+# data visualization
 import matplotlib.pyplot as plt
+import seaborn as sns
+from wordcloud import WordCloud, ImageColorGenerator
+from PIL import Image
+from scipy.ndimage import gaussian_gradient_magnitude
+
+# Natural Language processing and related data cleaning
 import contractions
 from nltk import TweetTokenizer
 import string
@@ -24,31 +59,48 @@ from collections import Counter
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk import pos_tag
-from wordcloud import WordCloud, ImageColorGenerator
-from PIL import Image
-from scipy.ndimage import gaussian_gradient_magnitude
+
+# data web-scraping for VIX
 import yfinance as yf
+
+# other data cleaning
 from datetime import timezone
+
+# model building
 from sklearn.model_selection import train_test_split
-import seaborn as sns
-from sklearn.pipeline import Pipeline
+from dask_ml.preprocessing import StandardScaler as daskStandardScaler
 from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
+from dask_ml.wrappers import ParallelPostFit
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import roc_auc_score
-from sklearn.metrics import plot_roc_curve
+from sklearn.metrics import classification_report
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import roc_curve
+from sklearn.cluster import KMeans
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.decomposition import TruncatedSVD
 
 
 
 
+
+
+
+
+
+##################
 ##################
 # Data Gathering #
 ##################
+##################
 
 
 
-
+# print our number of cpu cores
+print(multiprocessing.cpu_count())
 
 # json files sourced from https://github.com/bpb27/trump_tweet_data_archive
 df2015 = pd.read_json(r"C:\Users\sebid\OneDrive\Desktop\master_2015.json")
@@ -66,10 +118,11 @@ VIXdf = VIXdf.tz_localize(timezone.utc)
 
 
 
-
 ####################
 # Data Cleaning ####
 ####################
+
+
 
 
 # let's start with cleaning our VIX data frame since it is smaller
@@ -155,7 +208,6 @@ myData['is_quote_status'] = myData['is_quote_status'].astype(int)
 
 # and same as above for retweeted
 myData['retweeted'] = myData['retweeted'].astype(int)
-print(myData.info())
 
 # Now let's join our VIX Data to our tweet data
 myData = myData.merge(VIXdf, how='outer', left_index=True, right_index=True)
@@ -167,11 +219,11 @@ myData = myData.loc['2015-06-16':]
 # note that the closing values occur at market close, while these show
 # the value as occuring at 0:00 of that day
 # thus the tweets will be predictive of the closing direction for that day
-myData['volatilityUp'].fillna(method='ffill', inplace=True)
+myData['volatilityUp'] = myData['volatilityUp'].fillna(method='ffill')
 myData['volatilityUp'] = myData['volatilityUp'].astype('category')
 
 # let's refine our data to just texts that are filled in (no retweets) here
-myData.dropna(subset=['text'], inplace=True)
+myData = myData.dropna(subset=['text'])
 
 # let's drop all rows with text in the format "@USERNAME:"
 # these are other people tweeting @ing him, not his direct tweets
@@ -220,7 +272,7 @@ print(myData['noContractions'].head())
 # bunch of columns at the end, and B) not using excessive memory
 tokenizer = TweetTokenizer()
 myData['tokenizedTweets'] = myData['noContractions'].apply(tokenizer.tokenize)
-myData.drop(columns='noContractions', inplace=True)
+myData = myData.drop(columns='noContractions')
 
 # perform bag of words for topic discovery
 # first let's convert everything to lowercase
@@ -230,7 +282,7 @@ def listLowerer(list):
     return [token.lower() for token in list]
 
 myData['loweredTokens'] = myData['tokenizedTweets'].apply(listLowerer)
-myData.drop(columns='tokenizedTweets', inplace=True)
+myData = myData.drop(columns='tokenizedTweets')
 print(myData['loweredTokens'].head())
 
 # we also want to remove our stop words from the list. I'm just going to define
@@ -241,7 +293,7 @@ def listNoStopWords(list):
     return[token for token in list if token not in stopwords.words('english')]
 
 myData['noStopWordsTokens'] = myData['loweredTokens'].apply(listNoStopWords)
-myData.drop(columns='loweredTokens', inplace=True)
+myData = myData.drop(columns='loweredTokens')
 print(myData['noStopWordsTokens'].head())
 
 # pretty much going to do the same thing for punctuation as we did right above
@@ -249,7 +301,7 @@ def listNoPunct(list):
     return [token for token in list if token not in string.punctuation]
 
 myData['noPunctTokens'] = myData['noStopWordsTokens'].apply(listNoPunct)
-myData.drop(columns='noStopWordsTokens', inplace=True)
+myData = myData.drop(columns='noStopWordsTokens')
 
 # next we want to lemmatize our words to convert conjugations ect.
 # to root versions of words (i.e. "runs", "run", "ran")
@@ -263,7 +315,7 @@ def listLemmatize(list):
     return [lemmatizer.lemmatize(token) for token in list]
 
 myData['lemmatizedTokens'] = myData['noPunctTokens'].apply(listLemmatize)
-myData.drop(columns='noPunctTokens', inplace=True)
+myData = myData.drop(columns='noPunctTokens')
 print(myData['lemmatizedTokens'].head())
 
 
@@ -285,16 +337,20 @@ y = myData['volatilityUp']
 X = myData.drop(columns=['volatilityUp'])
 
 # here we will randomly split the data into a 70-30 train and test sets
-xTrain, xTest, yTrain, yTest = train_test_split(X, y, random_state=42, test_size=0.3)
+xTrain, xTest, yTrain, yTest = train_test_split(X, y, random_state=42, test_size=0.3, stratify=y)
 
-print(xTrain.isnull().sum())
+
+
+
+
+#########################
 #########################
 ## Feature Engineering ##
 #########################
+#########################
 
 
 
-# TODO: Create column or columns for sentiment analysis results
 
 # we can build a list that contains all of our words in the entire column here
 tokenList = []
@@ -339,24 +395,29 @@ print(allTextNounCountMeltedDF.head())
 
 # let's go ahead and create a list of every word that appears
 # originally were going to do that but it makes to large of a dataframe for memory
-# instead let's do the top 200 most mentioned nouns to make our dataframe more manageable
+# instead let's do the top 2500 most mentioned nouns to make our dataframe more manageable
 popularNounsList = [word for word in allTextNounCountMeltedDF.nlargest(2500, 'Count')['Word']]
 
 print("Firsts ten entries to popularNounsList: " + str(popularNounsList[0:10]))
+
+# same as above, but let's do the top 2500 most mentioned words to make our dataframe more manageable
+popularWordsList = [word for word in allTextCountMeltedDF.nlargest(2500, 'Count')['Word']]
+
+print("Firsts ten entries to popularWordsList: " + str(popularWordsList[0:10]))
 
 # I want to create a column for every word in all the tweets and
 # count how many times it occurs in that tweet
 def countWords(list, word):
     return list.count(word)
 
-for word in popularNounsList:
+for word in popularWordsList:
     xTrain['newCol'] = xTrain['lemmatizedTokens'].apply(countWords, args=(word, ))
-    xTrain.rename(columns={'newCol' : word}, inplace=True)
+    xTrain = xTrain.rename(columns={'newCol' : word})
 
-#we need to apply the above to the test data too
-for word in popularNounsList:
+# we need to apply the above to the test data too
+for word in popularWordsList:
     xTest['newCol'] = xTest['lemmatizedTokens'].apply(countWords, args=(word, ))
-    xTest.rename(columns={'newCol' : word}, inplace=True)
+    xTest = xTest.rename(columns={'newCol' : word})
 
 print(xTrain.columns)
 print(xTrain.head(10))
@@ -364,15 +425,89 @@ print(xTrain.info())
 
 # now that we have our counter for our lemmatized tokens and original text, we can drop this column
 dropList = ['lemmatizedTokens', 'text']
-xTrain.drop(columns=dropList, inplace=True)
-xTest.drop(columns=dropList, inplace=True)
+xTrain = xTrain.drop(columns=dropList)
+xTest = xTest.drop(columns=dropList)
+
+
+#############################################
+## Cluster Analysis for Feature Engineering #
+#############################################
+
+
+# first we want to find the optimal number of clusters to
+# perform our KMeans clustering on our X variables
+
+# here we are going to plot an elbow graph of our model
+# inertia to determine our number of clusters
+ks = range(1, 20)
+inertias = []
+
+for k in ks:
+    # create steps for our pipeline
+    pipelineSteps = [('scaler', StandardScaler()),
+                     ('kmeans', KMeans(n_clusters=k))]
+    model = Pipeline(pipelineSteps)
+
+    # Fit model to samples
+    model.fit(xTrain)
+
+    # Append the inertia to the list of inertias
+    inertias.append(model
+                    .named_steps['kmeans']
+                    .inertia_)
+
+# Plot ks vs inertias
+plt.plot(ks, inertias, '-o')
+plt.xlabel('number of clusters, k')
+plt.ylabel('inertia')
+plt.xticks(ks)
+plt.show()
+
+# create steps for our pipeline
+pipelineSteps = [('scaler', StandardScaler()),
+                 ('kmeans', KMeans(n_clusters=5))]
+
+# Create a KMeans model with 3 clusters: model
+model = Pipeline(pipelineSteps)
+
+# Use fit_predict to fit model and obtain cluster labels
+clusterLabels = model.fit_predict(xTrain)
+
+# create a df with labels and volatility outcomes
+clusterLabelVoldf = pd.DataFrame({'Cluster Labels': clusterLabels, 'volatilityUp': yTrain})
+
+# Create crosstab table
+crossTab = pd.crosstab(clusterLabelVoldf['Cluster Labels'], clusterLabelVoldf['volatilityUp'])
+print(crossTab)
+
+# add this as a column to our training data
+xTrain['kmeansClusterLabels'] = clusterLabels
+
+# let's do this for our test data too, using the model
+# created with the training data
+xTest['kmeansClusterLabels'] = model.predict(xTest)
+
+# optimize data for memory consumption (downcast in64s to int16s)
+ints = xTrain.select_dtypes(include=['int64', 'int32']).columns.tolist()
+xTrain[ints] = xTrain[ints].apply(pd.to_numeric, downcast='integer')
+
+ints = xTest.select_dtypes(include=['int64', 'int32']).columns.tolist()
+xTest[ints] = xTest[ints].apply(pd.to_numeric, downcast='integer')
+
+floats = xTrain.select_dtypes(include=['float']).columns.tolist()
+xTrain[floats] = xTrain[floats].apply(pd.to_numeric, downcast='float')
+
+floats = xTest.select_dtypes(include=['float']).columns.tolist()
+xTest[floats] = xTest[floats].apply(pd.to_numeric, downcast='float')
 
 
 
-
+################################
 ################################
 ## Exploratory Data Analysis ###
 ################################
+################################
+
 
 
 
@@ -471,7 +606,6 @@ trumpMask = trumpColors.copy()
 # do some edge detection
 trumpEdges = np.mean([gaussian_gradient_magnitude(trumpColors[:, :, i] / 255., 2) for i in range(3)], axis=0)
 trumpMask[trumpEdges > .08] = 255
-print(trumpMask)
 
 tweetCloud = WordCloud(background_color='gray',
                        max_words=2000,
@@ -489,12 +623,34 @@ plt.show()
 
 
 
+
 ###########################################
 ###########################################
 ##### Model Building ######################
 ###########################################
 ###########################################
 
+
+
+
+###############################
+#### Initiate Dask Cluster ####
+###############################
+
+
+# since we are using a pretty huge sparse matrix,
+# we are going to take advantage of parallel programming by using Dask
+#if __name__ == "__main__":
+    # Create a local cluster for Dask with as many workers as cores
+    #cluster = LocalCluster()
+    # create client
+   # client = Client(cluster)
+
+# now let's convert our pandas dataFrames to Dask dataFrames
+xTrain = dd.from_pandas(xTrain, npartitions=multiprocessing.cpu_count() * 2)
+xTest = dd.from_pandas(xTest, npartitions=multiprocessing.cpu_count() * 2)
+yTrain = dd.from_pandas(yTrain, npartitions=multiprocessing.cpu_count() * 2)
+yTest = dd.from_pandas(yTest, npartitions=multiprocessing.cpu_count() * 2)
 
 
 ######################################
@@ -505,14 +661,9 @@ plt.show()
 # we are first going to build a baseline logistic regression
 # model that predicts whether volatility goes up or down.
 
-# create a parameter grid for our grid search CV
-paramGrid = {
-    'C' : np.logspace(-4, 4, 20)
-}
-
 # here is a list of tuples for our pipeline steps.
-pipelineSteps = [('scaler', StandardScaler()),
-                 ('gridSearchLogReg', GridSearchCV(LogisticRegression(max_iter=10000), param_grid=paramGrid))]
+pipelineSteps = [('scaler', daskStandardScaler()),
+                 ('logReg', ParallelPostFit(estimator=LogisticRegression(max_iter=10000)))]
 
 # establish a pipeline object that will perform the above steps
 pipeline = Pipeline(pipelineSteps)
@@ -523,11 +674,253 @@ baselineLogReg = pipeline.fit(xTrain, yTrain)
 # create our prediction data
 yPred = baselineLogReg.predict(xTest)
 
+# create our predicted probabilities
+yPredProb = baselineLogReg.predict_proba(xTest)[:, 1]
+
+# create ROC curve values from predicted probabilities
+fpr, tpr, thresholds = roc_curve(yTest.compute(), yPredProb.compute())
+
 # score our baseline logistic regression model
-baselineLogRegScore = accuracy_score(yTest, yPred)
-print("BASELINE LOGISTIC REGRESSION\n ACCURACY SCORE:")
+baselineLogRegScore = accuracy_score(yTest.compute(), yPred.compute())
+
+# create our ROC AUC score
+rocAuc = roc_auc_score(yTest.compute(), yPredProb.compute())
+
+print("\nBASELINE LOGISTIC REGRESSION\nACCURACY SCORE:\n")
 print(baselineLogRegScore)
+print("\nBASELINE LOGISTIC REGRESSION\nAUC SCORES:\n")
+print(rocAuc)
+print("\nBASELINE LOGISTIC REGRESSION\nCONFUSION MATRIX:\n")
+print(confusion_matrix(yTest.compute(), yPred.compute()))
+print("\nBASELINE LOGISTIC REGRESSION\nCLASSIFICATION REPORT:\n")
+print(classification_report(yTest.compute(), yPred.compute()))
 
 # plot ROC curve for our model
-plot_roc_curve(baselineLogReg, xTest, yTest)
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr, tpr)
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curve')
+plt.title('ROC for Baseline Logistic Regression')
+plt.show()
+
+
+################################
+# SVD Feature Selection Tuning #
+################################
+
+
+# we want to reduce the number of columns we have for our models,
+# so we will use SVD to reduce our features
+# we are using SVD instead of PCA because SVD is ideal for sparse
+# matrices, like we have in bag of words
+
+# to determine the ideal number of features for
+# SVD to reduce our data down to, we will first iterate through a
+# for loop ranging the number of possible features to reduce to
+# and then see which model performs best.
+# the model we are using for our comparison is our baseline logistic regression
+
+# first we define a dictionary to hold our model
+# names (a string of the number of components for SVD)
+modelDict = dict()
+
+# then we iterate through 1 and 1000 desired features (n_components) to see what the
+# optimal number of components is for our SVD dimension reduction
+for i in np.arange(100, 2000, 100):
+    # here is a list of tuples for our pipeline steps.
+    pipelineSteps = [('scaler', daskStandardScaler()),
+                     ('svd', ParallelPostFit(TruncatedSVD(n_components=i))),
+                     ('logReg', ParallelPostFit(LogisticRegression(max_iter=10000)))]
+    modelDict[str(i)] = Pipeline(pipelineSteps)
+
+# evaluate the models and store results
+results, names = list(), list()
+for name, model in modelDict.items():
+    model.fit(xTrain, yTrain)
+    yPred = model.predict(xTest)
+    scores = accuracy_score(yTest.compute(), yPred.compute())
+    results.append(scores)
+    names.append(name)
+    print(name, scores)
+
+# create a datframe of our results
+svdResults = pd.DataFra
+
+# plot model performance for comparison
+plt.bar(results, height=results, labels=names)
+plt.xticks(rotation=45)
+plt.show()
+
+
+##############
+# Baseline Logistic Regression with SVD Dimension Reduction
+# here is a list of tuples for our pipeline steps.
+pipelineSteps = [('scaler', StandardScaler()),
+                 ('svd', TruncatedSVD(n_components=100)),
+                 ('logReg', LogisticRegression(max_iter=10000))]
+
+# establish a pipeline object that will perform the above steps
+pipeline = Pipeline(pipelineSteps)
+
+# create our baseline logistic regression model
+baselineLogReg = pipeline.fit(xTrain, yTrain)
+
+# create our prediction data
+yPred = baselineLogReg.predict(xTest)
+
+# create our predicted probabilities
+yPredProb = baselineLogReg.predict_proba(xTest)[:, 1]
+
+# create ROC curve values from predicted probabilities
+fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+
+# score our baseline logistic regression model
+baselineLogRegScore = accuracy_score(yTest, yPred)
+
+# create our ROC AUC score
+rocAuc = roc_auc_score(yTest, yPredProb)
+
+print("\nBASELINE LOGISTIC REGRESSION\nACCURACY SCORE:\n")
+print(baselineLogRegScore)
+print("\nBASELINE LOGISTIC REGRESSION\nAUC SCORES:\n")
+print(rocAuc)
+print("\nBASELINE LOGISTIC REGRESSION\nCONFUSION MATRIX:\n")
+print(confusion_matrix(yTest, yPred))
+print("\nBASELINE LOGISTIC REGRESSION\nCLASSIFICATION REPORT:\n")
+print(classification_report(yTest, yPred))
+
+# plot ROC curve for our model
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr, tpr)
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curve')
+plt.title('ROC for Baseline Logistic Regression')
+plt.show()
+
+
+###################################
+# Tuned Logistic regression model #
+###################################
+
+
+# this is a logistic regression with hyperparameter tuning
+
+# create a parameter grid for our grid search CV
+paramGrid = {
+    'C' : np.logspace(-4, 4, 20)
+}
+
+# here is a list of tuples for our pipeline steps.
+pipelineSteps = [('scaler', StandardScaler()),
+                 ('gridSearchLogReg', GridSearchCV(LogisticRegression(max_iter=20000), param_grid=paramGrid))]
+
+# establish a pipeline object that will perform the above steps
+pipeline = Pipeline(pipelineSteps)
+
+# create our baseline logistic regression model
+tunedLogReg = pipeline.fit(xTrain, yTrain)
+
+# create our prediction data
+yPred = tunedLogReg.predict(xTest)
+
+# create our predicted probabilities
+yPredProb = tunedLogReg.predict_proba(xTest)[:, 1]
+
+# create ROC curve values from predicted probabilities
+fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+
+# score our baseline logistic regression model
+tunedLogRegScore = accuracy_score(yTest, yPred)
+
+# create our ROC AUC score
+rocAuc = roc_auc_score(yTest, yPredProb)
+
+# Print the tuned parameters and score
+print("TUNED LOGISTIC REGRESSION HYPERPARAMETERS: {}".format(tunedLogReg
+                                                             .named_steps['gridSearchLogReg']
+                                                             .best_params_))
+print("Best score is {}".format(tunedLogReg
+                                .named_steps['gridSearchLogReg']
+                                .best_score_))
+print("\nTUNED LOGISTIC REGRESSION\nACCURACY SCORE:\n")
+print(tunedLogRegScore)
+print("\nTUNED LOGISTIC REGRESSION\nAUC SCORE:\n")
+print(rocAuc)
+print("\nTUNED LOGISTIC REGRESSION\nCONFUSION MATRIX:\n")
+print(confusion_matrix(yTest, yPred))
+print("\nTUNED LOGISTIC REGRESSION\nCLASSIFICATION REPORT:\n")
+print(classification_report(yTest, yPred))
+
+# plot ROC curve for our model
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr, tpr)
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curve')
+plt.title('ROC for Tuned Logistic Regression')
+plt.show()
+
+
+###################################
+# Multinomial Bayesian Classifier #
+###################################
+
+
+# this is a multinomial bayesian classifier with hyperparameter tuning
+
+# create a parameter grid for our grid search CV
+paramGrid = {
+    'alpha' : [1, 1e-1, 1e-2]
+}
+
+# here is a list of tuples for our pipeline steps.
+pipelineSteps = [('scaler', StandardScaler()),
+                 ('naiveBayes', GridSearchCV(MultinomialNB(), param_grid=paramGrid))]
+
+# establish a pipeline object that will perform the above steps
+pipeline = Pipeline(pipelineSteps)
+
+# create our baseline logistic regression model
+naiveBayes = pipeline.fit(xTrain, yTrain)
+
+# create our prediction data
+yPred = naiveBayes.predict(xTest)
+
+# create our predicted probabilities
+yPredProb = naiveBayes.predict_proba(xTest)[:, 1]
+
+# create ROC curve values from predicted probabilities
+fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+
+# score our baseline logistic regression model
+naiveBayesScore = accuracy_score(yTest, yPred)
+
+# create our ROC AUC score
+rocAuc = roc_auc_score(yTest, yPredProb)
+
+# Print the tuned parameters and score
+print("TUNED NAIVE BAYES HYPERPARAMETERS: {}".format(naiveBayes
+                                                             .named_steps['naiveBayes']
+                                                             .best_params_))
+print("Best score is {}".format(naiveBayes
+                                .named_steps['naiveBayes']
+                                .best_score_))
+print("\nTUNED NAIVE BAYES\nACCURACY SCORE:\n")
+print(naiveBayesScore)
+print("\nTUNED NAIVE BAYES\nAUC SCORE:\n")
+print(rocAuc)
+print("\nTUNED NAIVE BAYES\nCONFUSION MATRIX:\n")
+print(confusion_matrix(yTest, yPred))
+print("\nTUNED NAIVE BAYES\nCLASSIFICATION REPORT:\n")
+print(classification_report(yTest, yPred))
+
+# plot ROC curve for our model
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr, tpr)
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curve')
+plt.title('ROC for Naive Bayes')
 plt.show()
