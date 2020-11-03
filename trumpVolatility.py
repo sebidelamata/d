@@ -42,6 +42,7 @@ import numpy as np
 import dask.dataframe as dd
 import dask.array as da
 import multiprocessing
+import joblib
 from dask.distributed import Client, LocalCluster
 
 # data visualization
@@ -74,7 +75,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from dask_ml.wrappers import ParallelPostFit
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import GridSearchCV
+from dask_ml.model_selection import GridSearchCV
+#from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
@@ -85,9 +87,11 @@ from sklearn.decomposition import TruncatedSVD
 
 
 
+#if __name__ == "__main__":
+#    client = Client()
 
-
-
+#client = Client(processes=False)
+#client
 
 
 
@@ -445,7 +449,7 @@ inertias = []
 for k in ks:
     # create steps for our pipeline
     pipelineSteps = [('scaler', StandardScaler()),
-                     ('kmeans', KMeans(n_clusters=k))]
+                     ('kmeans', ParallelPostFit(KMeans(n_clusters=k)))]
     model = Pipeline(pipelineSteps)
 
     # Fit model to samples
@@ -530,7 +534,7 @@ textCountDF = myData.resample('D').apply({'text' : 'count'})
 plt.style.use('ggplot')
 plt.plot(textCountDF.text, c='blue')
 plt.title('Count of Trump\'s tweets by day 2015-2017\nAn average of ' +
-          str(round(textCountDF['text'].mean(), 1)) +
+          str(int(round(textCountDF['text'].mean(), 1))) +
           ' tweets per day')
 plt.xlabel('Date')
 plt.ylabel('Count of Tweets')
@@ -727,7 +731,7 @@ modelDict = dict()
 
 # then we iterate through 1 and 1000 desired features (n_components) to see what the
 # optimal number of components is for our SVD dimension reduction
-for i in np.arange(100, 2000, 100):
+for i in np.arange(50, 1000, 50):
     # here is a list of tuples for our pipeline steps.
     pipelineSteps = [('scaler', daskStandardScaler()),
                      ('svd', ParallelPostFit(TruncatedSVD(n_components=i))),
@@ -744,51 +748,60 @@ for name, model in modelDict.items():
     names.append(name)
     print(name, scores)
 
-# create a datframe of our results
-svdResults = pd.DataFra
+# create a dataframe of our results
+svdResults = pd.DataFrame({'accuracyScore' : results, 'n_components' : names})
 
 # plot model performance for comparison
-plt.bar(results, height=results, labels=names)
+plt.bar(svdResults['n_components'], height=svdResults['accuracyScore'])
+plt.title("Accuracy scores for baseline logistic regression\n with varying SVD selected features")
+plt.xlabel("Number of SVD selected features")
+plt.ylabel("Accuracy score")
 plt.xticks(rotation=45)
 plt.show()
 
+# set a variable to store the number of components that score the highest
+nComponents = int(svdResults['n_components'].iloc[svdResults['accuracyScore'].idxmax()])
+print("SVD selection for number of features: " + str(nComponents))
 
-##############
-# Baseline Logistic Regression with SVD Dimension Reduction
+####################################################
+# Logistic Regression with SVD Dimension Reduction #
+####################################################
+
+
 # here is a list of tuples for our pipeline steps.
-pipelineSteps = [('scaler', StandardScaler()),
-                 ('svd', TruncatedSVD(n_components=100)),
-                 ('logReg', LogisticRegression(max_iter=10000))]
+pipelineSteps = [('scaler', daskStandardScaler()),
+                 ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents))),
+                 ('logReg', ParallelPostFit(LogisticRegression(max_iter=10000)))]
 
 # establish a pipeline object that will perform the above steps
 pipeline = Pipeline(pipelineSteps)
 
 # create our baseline logistic regression model
-baselineLogReg = pipeline.fit(xTrain, yTrain)
+logRegSVD = pipeline.fit(xTrain, yTrain)
 
 # create our prediction data
-yPred = baselineLogReg.predict(xTest)
+yPred = logRegSVD.predict(xTest)
 
 # create our predicted probabilities
-yPredProb = baselineLogReg.predict_proba(xTest)[:, 1]
+yPredProb = logRegSVD.predict_proba(xTest)[:, 1]
 
 # create ROC curve values from predicted probabilities
-fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+fpr, tpr, thresholds = roc_curve(yTest.compute(), yPredProb.compute())
 
 # score our baseline logistic regression model
-baselineLogRegScore = accuracy_score(yTest, yPred)
+logRegSVDScore = accuracy_score(yTest.compute(), yPred.compute())
 
 # create our ROC AUC score
-rocAuc = roc_auc_score(yTest, yPredProb)
+rocAuc = roc_auc_score(yTest.compute(), yPredProb.compute())
 
-print("\nBASELINE LOGISTIC REGRESSION\nACCURACY SCORE:\n")
+print("\nLOGISTIC REGRESSION WITH SVD\nACCURACY SCORE:\n")
 print(baselineLogRegScore)
-print("\nBASELINE LOGISTIC REGRESSION\nAUC SCORES:\n")
+print("\nLOGISTIC REGRESSION WITH SVD\nAUC SCORES:\n")
 print(rocAuc)
-print("\nBASELINE LOGISTIC REGRESSION\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest, yPred))
-print("\nBASELINE LOGISTIC REGRESSION\nCLASSIFICATION REPORT:\n")
-print(classification_report(yTest, yPred))
+print("\nLOGISTIC REGRESSION WITH SVD\nCONFUSION MATRIX:\n")
+print(confusion_matrix(yTest.compute(), yPred.compute()))
+print("\nLOGISTIC REGRESSION WITH SVD\nCLASSIFICATION REPORT:\n")
+print(classification_report(yTest.compute(), yPred.compute()))
 
 # plot ROC curve for our model
 plt.plot([0, 1], [0, 1], 'k--')
@@ -796,7 +809,7 @@ plt.plot(fpr, tpr)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
-plt.title('ROC for Baseline Logistic Regression')
+plt.title('ROC for Logistic Regression with SVD')
 plt.show()
 
 
@@ -809,18 +822,22 @@ plt.show()
 
 # create a parameter grid for our grid search CV
 paramGrid = {
-    'C' : np.logspace(-4, 4, 20)
+    'logReg__estimator__C' : np.logspace(-4, 4, 20)
 }
 
 # here is a list of tuples for our pipeline steps.
 pipelineSteps = [('scaler', StandardScaler()),
-                 ('gridSearchLogReg', GridSearchCV(LogisticRegression(max_iter=20000), param_grid=paramGrid))]
+                 ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents))),
+                 ('logReg', ParallelPostFit(LogisticRegression(max_iter=20000)))]
 
 # establish a pipeline object that will perform the above steps
 pipeline = Pipeline(pipelineSteps)
 
-# create our baseline logistic regression model
-tunedLogReg = pipeline.fit(xTrain, yTrain)
+# now we go through a grid search crossvalidation on our model using the hyper parameters
+tunedLogReg = GridSearchCV(pipeline, param_grid=paramGrid, n_jobs=-1, cv=5)
+
+# fit our tuned logistic regression model
+tunedLogReg.fit(xTrain, yTrain)
 
 # create our prediction data
 yPred = tunedLogReg.predict(xTest)
@@ -831,19 +848,15 @@ yPredProb = tunedLogReg.predict_proba(xTest)[:, 1]
 # create ROC curve values from predicted probabilities
 fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
 
-# score our baseline logistic regression model
+# score our tuned logistic regression model
 tunedLogRegScore = accuracy_score(yTest, yPred)
 
 # create our ROC AUC score
 rocAuc = roc_auc_score(yTest, yPredProb)
 
 # Print the tuned parameters and score
-print("TUNED LOGISTIC REGRESSION HYPERPARAMETERS: {}".format(tunedLogReg
-                                                             .named_steps['gridSearchLogReg']
-                                                             .best_params_))
-print("Best score is {}".format(tunedLogReg
-                                .named_steps['gridSearchLogReg']
-                                .best_score_))
+print("TUNED LOGISTIC REGRESSION HYPERPARAMETERS: {}".format(tunedLogReg.best_params_))
+print("Best score is {}".format(tunedLogReg.best_score_))
 print("\nTUNED LOGISTIC REGRESSION\nACCURACY SCORE:\n")
 print(tunedLogRegScore)
 print("\nTUNED LOGISTIC REGRESSION\nAUC SCORE:\n")
@@ -877,13 +890,17 @@ paramGrid = {
 
 # here is a list of tuples for our pipeline steps.
 pipelineSteps = [('scaler', StandardScaler()),
-                 ('naiveBayes', GridSearchCV(MultinomialNB(), param_grid=paramGrid))]
+                 ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents))),
+                 ('naiveBayes', ParallelPostFit(MultinomialNB()))]
 
 # establish a pipeline object that will perform the above steps
 pipeline = Pipeline(pipelineSteps)
 
+# create a grid search cross validation
+naiveBayes = GridSearchCV(pipeline, param_grid=paramGrid, n_jobs=-1, cv=5)
+
 # create our baseline logistic regression model
-naiveBayes = pipeline.fit(xTrain, yTrain)
+naiveBayes.fit(xTrain, yTrain)
 
 # create our prediction data
 yPred = naiveBayes.predict(xTest)
@@ -901,12 +918,8 @@ naiveBayesScore = accuracy_score(yTest, yPred)
 rocAuc = roc_auc_score(yTest, yPredProb)
 
 # Print the tuned parameters and score
-print("TUNED NAIVE BAYES HYPERPARAMETERS: {}".format(naiveBayes
-                                                             .named_steps['naiveBayes']
-                                                             .best_params_))
-print("Best score is {}".format(naiveBayes
-                                .named_steps['naiveBayes']
-                                .best_score_))
+print("TUNED NAIVE BAYES HYPERPARAMETERS: {}".format(naiveBayes.best_params_))
+print("Best score is {}".format(naiveBayes.best_score_))
 print("\nTUNED NAIVE BAYES\nACCURACY SCORE:\n")
 print(naiveBayesScore)
 print("\nTUNED NAIVE BAYES\nAUC SCORE:\n")
