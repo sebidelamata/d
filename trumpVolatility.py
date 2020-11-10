@@ -51,6 +51,7 @@ from dask.distributed import Client, LocalCluster
 # which doesn't play nice with parallel jobs, so we'll change it to Agg
 import matplotlib
 matplotlib.use('Agg')
+import matplotlib.ticker as mtk
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud, ImageColorGenerator
@@ -670,6 +671,8 @@ plt.title('Count of Trump\'s tweets by day 2015-2017\nAn average of ' +
           str(int(round(textCountDF['text'].mean(), 1))) +
           ' tweets per day')
 plt.xlabel('Date')
+plt.xticks(fontsize=7,
+           rotation=45)
 plt.ylabel('Count of Tweets')
 plt.savefig(outputFilepath+r"\trumpVolatilityCountTrumpTweetsPerDayLineplot.jpeg",
             dpi=dpiSettings,
@@ -679,21 +682,56 @@ plt.close()
 # a probability distribution of the frequency of trumps tweets per day
 plt.hist(textCountDF['text'],
          bins=textCountDF['text'].max(),
-         density=True)
+         density=True,
+         align='left')
 plt.title('PDF of count of Trump\'s tweets per day')
 plt.ylabel('PDF')
 plt.xlabel('Count of tweets')
+plt.axvline(textCountDF['text'].mean(),
+            color='black',
+            linewidth=2)
+plt.annotate("Mean of\n" + str(textCountDF['text'].mean()) + " tweets",
+             xy=(textCountDF['text'].mean(), 0.5),
+             xytext=(textCountDF['text'].mean() + 5, 0.1),
+             arrowprops=dict(arrowstyle='->',
+                             color='black',
+                             linewidth=1))
 plt.savefig(outputFilepath+r"\trumpVolatilityCountTrumpTweetsPerDayPDF.jpeg",
             dpi=dpiSettings,
             bbox_inches='tight')
 plt.close()
 
-# TODO: What time of day does trump usually tweet at?
+# what time of day does trump usually tweet?
+# first we resample to an hour by summing the count of tweets
+textCountTimeDF = myData.resample('60min')\
+    .apply({'text' : 'count'})
+# then we subtract 7 hours to put us back in normal time (vs market time)
+textCountTimeDF.index = textCountTimeDF.index - DateOffset(hours=7)
+print(textCountTimeDF.head())
+# we create an hour column based on the index's hour
+textCountTimeDF['Hour'] = textCountTimeDF.index.hour
+# then we group by our hour, summing the count of text
+textCountTimeDF = textCountTimeDF.groupby('Hour').sum()
+# we then modify the column to divide its value by the sum of the entire column (a percentage)
+textCountTimeDF['text'] = textCountTimeDF['text'] / textCountTimeDF['text'].sum()
+print(textCountTimeDF.head())
+plt.style.use('ggplot')
+plt.plot(textCountTimeDF['text'],
+         c='blue',)
+plt.title('Percent of Trump\'s tweets by hour of the day 2015-2017')
+plt.xlabel('Hour of Day')
+plt.ylabel('Percent of tweets by hour of the day')
+plt.yaxis.set_major_formatter(mtk.PercentFormatter())
+plt.savefig(outputFilepath+r"\trumpVolatilityPercentTrumpTweetsPerHourLineplot.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # histogram of the number of all caps words per tweet
 plt.hist(myData['allCaps'],
          bins=myData['allCaps'].max(),
-         density=True)
+         density=True,
+         align='left')
 plt.title('Probability distribution of the number of all-caps words per Trump tweet')
 plt.xlabel('Number of all caps words per Tweet')
 plt.ylabel('PDF')
@@ -705,7 +743,8 @@ plt.close()
 # histogram of the number of exclamation points per tweet
 plt.hist(myData['exclamationPoints'],
          bins=myData['exclamationPoints'].max(),
-         density=True)
+         density=True,
+         align='left')
 plt.title('Probability distribution of the number of exclamation points per Trump tweet')
 plt.xlabel('Number of exclamation points per Tweet')
 plt.ylabel('PDF')
@@ -717,7 +756,8 @@ plt.close()
 # histogram of the number of hashtags per tweet
 plt.hist(myData['hashtags'],
          bins=myData['hashtags'].max(),
-         density=True)
+         density=True,
+         align='left')
 plt.title('Probability distribution of the number of hashtags per Trump tweet')
 plt.xlabel('Number of all hashtags per Tweet')
 plt.ylabel('PDF')
@@ -729,7 +769,8 @@ plt.close()
 # histogram of the number of userHandles per tweet
 plt.hist(myData['userHandleCount'],
          bins=myData['userHandleCount'].max(),
-         density=True)
+         density=True,
+         align='left')
 plt.title('Probability distribution of the number of user handle mentions per Trump tweet')
 plt.xlabel('Number of user handle mentions per Tweet')
 plt.ylabel('PDF')
