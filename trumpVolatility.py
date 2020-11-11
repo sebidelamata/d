@@ -34,6 +34,12 @@
 
 
 
+# library for routing out printing log to text file
+import sys
+
+# library to time our program and report it to the log file
+import time
+
 # libraries for data cleaning and manipulation frameworks
 import pandas as pd
 import numpy as np
@@ -43,8 +49,6 @@ import dask.dataframe as dd
 import dask.array as da
 import multiprocessing
 import joblib
-from dask import visualize
-from dask.distributed import Client, LocalCluster
 
 # data visualization
 # the matplotlib import stuff looks dumb, but matplotlib uses tkinter on the backend
@@ -56,7 +60,6 @@ import seaborn as sns
 from wordcloud import WordCloud, ImageColorGenerator
 from PIL import Image
 from scipy.ndimage import gaussian_gradient_magnitude
-import graphviz
 
 # Natural Language processing and related data cleaning
 import contractions
@@ -73,27 +76,23 @@ import yfinance as yf
 # other data cleaning
 from datetime import timezone
 from pandas.tseries.offsets import DateOffset
-import sparse
 from scipy.sparse import csr_matrix
 
 # model building
 from sklearn.model_selection import train_test_split
-from dask_ml.preprocessing import StandardScaler as daskStandardScaler
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from dask_ml.wrappers import ParallelPostFit
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import silhouette_score
 from dask_ml.model_selection import GridSearchCV
-#from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import roc_curve
 from sklearn.cluster import KMeans
-from sklearn.naive_bayes import MultinomialNB
 from sklearn.decomposition import TruncatedSVD
-from dask_ml.wrappers import Incremental
 from dask_ml.model_selection import RandomizedSearchCV
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import VotingClassifier
@@ -104,16 +103,37 @@ from sklearn.ensemble import GradientBoostingClassifier
 
 
 
-#####################
-#####################
-## OUTPUT FILEPATH ##
-#####################
-#####################
+########################################
+########################################
+## OUTPUT FILEPATHS AND STANDARD OUTS ##
+########################################
+########################################
 
 
-outputFilepath = r"C:\Users\sebid\OneDrive\Desktop\trumpVolatilityImages"
-dpiSettings = 400
-plt.figure(figsize=([8, 10]))
+
+
+# establish old std out variable to reassign at the end of the script when we're done printing
+oldStdOut = sys.stdout
+
+# establish our output file path
+outputFilepath = r"C:\Users\sebid\OneDrive\Desktop\trumpVolatilityOutput"
+
+# establish the specific path of our log fil text document
+logFilePath = outputFilepath + r"\trumpVolatilityLogFile.txt"
+
+# connect to our logfile
+logFile = open(logFilePath, 'w', encoding='utf-8')
+
+# establish our new standard out to print to this connection
+sys.stdout = logFile
+
+# get the start time and print it to the log so we can see how long our program takes
+startTime = time.time()
+print("Program started running at: " + str(startTime))
+
+# fig settings for our image output
+dpiSettings = 300
+plt.figure(figsize=([10, 12]))
 
 
 
@@ -126,8 +146,6 @@ plt.figure(figsize=([8, 10]))
 
 
 
-# print our number of cpu cores
-print(multiprocessing.cpu_count())
 
 # json files sourced from https://github.com/bpb27/trump_tweet_data_archive
 df2015 = pd.read_json(r"C:\Users\sebid\OneDrive\Desktop\master_2015.json")
@@ -164,23 +182,29 @@ VIXdf.drop(columns=['VIX_Daily_Close'], inplace=True)
 
 # we're just going to do all of these in a for loop to save time
 # first we will make a list of our dfs
-dfList = [df2015, df2016, df2017, df2018]
+dfList = [df2015,
+          df2016,
+          df2017,
+          df2018]
 
 # df2015 doesn't have the variable retweeted_status, so we have to drop it
 # here before the loop (we were going to drop it anyway
 for df in dfList[1:]:
-    df.drop(columns=['retweeted_status'], inplace=True)
+    df.drop(columns=['retweeted_status'],
+            inplace=True)
 # apparently this is also true for display_text_range, but only with 2017 and 2018
 # same thing for full_text
 for df in dfList[2:]:
     df.drop(columns=['display_text_range',
-                     'full_text'], inplace=True)
+                     'full_text'],
+            inplace=True)
 
 # just 2016 has three columns that are unique and kind of useless, also dicts that mess up the merge
 df2016.drop(columns=['scopes',
                      'withheld_scope',
                      'withheld_in_countries',
-                     'withheld_copyright'], inplace=True)
+                     'withheld_copyright'],
+            inplace=True)
 
 # now we clean common problems at once:
 # first we make the datetime an index
@@ -213,16 +237,14 @@ for df in dfList:
     # the next day, and our closing price doesn't happen until 5pm of that next day. Practically speaking,
     # this means our trading "day" should probably start at 5pm after the markets close, and end 5pm the
     # next day at market close. To account for this, we will shift all of the Don's tweets forward 2 hours,
-    # so that 5pm becomes the new "midnight" (start/end of our day). We are pushing forward 7 hours, but first
-    # we have to convert to US Eastern Time because time is given in utc, which is 5 hours ahead of edt,
-    # but also doesnt account for difference in daylight savings dates. This way if he tweets something after
+    # so that 5pm becomes the new "midnight" (start/end of our day). This way if he tweets something after
     # market close, those tweets will be the independent variables to predict then next available close price.
     # Sorry if that was really wordy for what is essentially just the one line of code that follows this comment,
     # but this is a pretty big modification to the data if you think about it, and if I pushed all the tweets
     # two hours forward I figured like that would trigger some alarms about that being suspicious.
-    df['created_at'] = df['created_at'].tz_convert('US/Eastern')
-    df['created_at'] = df['created_at'] + DateOffset(hours=7)
-    df.set_index('created_at', inplace=True)
+    df['created_at'] = df['created_at'] + DateOffset(hours=2)
+    df.set_index('created_at',
+                 inplace=True)
     df.drop(columns=['contributors',
                      'geo',
                      'coordinates',
@@ -243,10 +265,12 @@ for df in dfList:
                      'in_reply_to_user_id_str',
                      'in_reply_to_status_id_str',
                      'quoted_status_id_str',
-                     'possibly_sensitive'], inplace=True)
+                     'possibly_sensitive'],
+            inplace=True)
 
 # now let's append our dataframes to make a big one
-myData = df2015.append(dfList[1:]).sort_index()
+myData = df2015.append(dfList[1:])\
+    .sort_index()
 myData.drop_duplicates(inplace=True)
 
 # let's transfer the truncated column to an int64 to get it ready for the machine learning process
@@ -259,7 +283,10 @@ myData['is_quote_status'] = myData['is_quote_status'].astype(int)
 myData['retweeted'] = myData['retweeted'].astype(int)
 
 # Now let's join our VIX Data to our tweet data
-myData = myData.merge(VIXdf, how='outer', left_index=True, right_index=True)
+myData = myData.merge(VIXdf,
+                      how='outer',
+                      left_index=True,
+                      right_index=True)
 
 # June 16th 2015 is the day Trump announced his campaign. Let's start here
 myData = myData.loc['2015-06-16':]
@@ -286,28 +313,33 @@ def regexCountColumn(regex, df, newColumnName):
 # this might be an indication of strong emotional, or more volatile behavior
 # we'll do this with a regex search for all all caps words
 allCaps = r'\b[A-Z]+\b'
-regexCountColumn(allCaps, myData, 'allCaps')
-print(myData['allCaps'].max())
+regexCountColumn(allCaps,
+                 myData,
+                 'allCaps')
 
 # create a count of all exclamation points
 exclamationPoints = r'!'
-regexCountColumn(allCaps, myData, 'exclamationPoints')
-print(myData['exclamationPoints'].max())
+regexCountColumn(allCaps,
+                 myData,
+                 'exclamationPoints')
 
 # create a count of all hash tags
 hashtags = r'#'
-regexCountColumn(hashtags, myData, 'hashtags')
-print(myData['hashtags'].max())
+regexCountColumn(hashtags,
+                 myData,
+                 'hashtags')
 
 # create a count of all other user mentions
 userHandleCount = r'@[^\s]'
-regexCountColumn(userHandleCount, myData, 'userHandleCount')
-print(myData['userHandleCount'].max())
+regexCountColumn(userHandleCount,
+                 myData,
+                 'userHandleCount')
 
 # let's make another variable that is the number of words in a tweet
 tweetWordCount = r'\b[A-Za-z]+\b'
-regexCountColumn(tweetWordCount, myData, 'tweetWordCount')
-print(myData['tweetWordCount'].max())
+regexCountColumn(tweetWordCount,
+                 myData,
+                 'tweetWordCount')
 
 # before we tokenize our words let's change contractions to full words
 myData['noContractions'] = myData['text'].apply(contractions.fix)
@@ -386,7 +418,11 @@ y = myData['volatilityUp']
 X = myData.drop(columns=['volatilityUp'])
 
 # here we will randomly split the data into a 70-30 train and test sets
-xTrain, xTest, yTrain, yTest = train_test_split(X, y, random_state=42, test_size=0.3, stratify=y)
+xTrain, xTest, yTrain, yTest = train_test_split(X,
+                                                y,
+                                                random_state=42,
+                                                test_size=0.3,
+                                                stratify=y)
 
 
 
@@ -418,13 +454,18 @@ allTextCount = Counter(tokenList)
 print(allTextCount.most_common(50))
 
 # let's turn this Counter object into a dataframe so we can explore it,
-allTextCountDF = pd.DataFrame.from_records(allTextCount, index=[0])
+allTextCountDF = pd.DataFrame\
+    .from_records(allTextCount,
+                  index=[0])
 print(allTextCountDF.info())
 print(allTextCountDF.head())
 
 # we will need to melt the dataframe above to be able to visualize the counts against one another
-allTextCountMeltedDF = allTextCountDF.melt(var_name='Word', value_name='Count')
-allTextCountMeltedDF.sort_values(by=['Count'], ascending=False, inplace=True)
+allTextCountMeltedDF = allTextCountDF.melt(var_name='Word',
+                                           value_name='Count')
+allTextCountMeltedDF.sort_values(by=['Count'],
+                                 ascending=False,
+                                 inplace=True)
 print(allTextCountMeltedDF.head())
 
 # a look over the count of all nouns
@@ -432,14 +473,18 @@ allTextNounCount = Counter(tokensNouns)
 print(allTextNounCount.most_common(50))
 
 # same for nouns as we did with all words above
-allTextNounCountDF = pd.DataFrame.from_records(allTextNounCount, index=[0])
+allTextNounCountDF = pd.DataFrame.from_records(allTextNounCount,
+                                               index=[0])
 print(allTextNounCountDF.info())
 print(allTextNounCountDF.head())
 
 
 # we will need to melt the dataframe above to be able to visualize the counts against one another
-allTextNounCountMeltedDF = allTextNounCountDF.melt(var_name='Word', value_name='Count')
-allTextNounCountMeltedDF.sort_values(by=['Count'], ascending=False, inplace=True)
+allTextNounCountMeltedDF = allTextNounCountDF.melt(var_name='Word',
+                                                   value_name='Count')
+allTextNounCountMeltedDF.sort_values(by=['Count'],
+                                     ascending=False,
+                                     inplace=True)
 print(allTextNounCountMeltedDF.head())
 
 # let's go ahead and create a list of every word that appears
@@ -460,12 +505,14 @@ def countWords(list, word):
     return list.count(word)
 
 for word in popularWordsList:
-    xTrain['newCol'] = xTrain['lemmatizedTokens'].apply(countWords, args=(word, ))
+    xTrain['newCol'] = xTrain['lemmatizedTokens'].apply(countWords,
+                                                        args=(word, ))
     xTrain = xTrain.rename(columns={'newCol' : word})
 
 # we need to apply the above to the test data too
 for word in popularWordsList:
-    xTest['newCol'] = xTest['lemmatizedTokens'].apply(countWords, args=(word, ))
+    xTest['newCol'] = xTest['lemmatizedTokens'].apply(countWords,
+                                                      args=(word, ))
     xTest = xTest.rename(columns={'newCol' : word})
 
 print(xTrain.columns)
@@ -473,7 +520,8 @@ print(xTrain.head(10))
 print(xTrain.info())
 
 # now that we have our counter for our lemmatized tokens and original text, we can drop this column
-dropList = ['lemmatizedTokens', 'text']
+dropList = ['lemmatizedTokens',
+            'text']
 xTrain = xTrain.drop(columns=dropList)
 xTest = xTest.drop(columns=dropList)
 
@@ -488,36 +536,39 @@ xTest = xTest.drop(columns=dropList)
 
 # here we are going to plot an elbow graph of our model
 # inertia to determine our number of clusters
-ks = np.arange(10, 61, 5)
-inertias = []
+ks = np.arange(2,
+               11,
+               1)
+silhouetteScore = []
 
 for k in ks:
     # create steps for our pipeline
     pipelineSteps = [('scaler', StandardScaler()),
-                     ('kmeans', ParallelPostFit(KMeans(n_clusters=k, random_state=42, algorithm='full')))]
+                     ('kmeans', KMeans(n_clusters=k,
+                                       random_state=42,
+                                       algorithm='full'))]
     model = Pipeline(pipelineSteps)
 
     # Fit model to samples
-    with joblib.parallel_backend('threading', n_jobs=-1):
-        model.fit(xTrain.values)
-
-    # Append the inertia to the list of inertias
-    inertias.append(model
-                    .named_steps['kmeans']
-                    .inertia_)
+    with joblib.parallel_backend('threading',
+                                 n_jobs=-1):
+        # Append the inertia to the list of inertias
+        silhouetteScore.append(silhouette_score(xTrain.values, model.fit_predict(xTrain.values)))
 
 # Plot ks vs inertias
-plt.plot(ks, inertias, '-o')
-plt.title("Varying inertia of k clusters\nthrough unsupervised k-means clustering")
-plt.xlabel('number of clusters, k')
-plt.ylabel('inertia')
+plt.plot(ks, silhouetteScore, '-o')
+plt.title("Varying silhouette scores of k clusters\nthrough unsupervised k-means clustering")
+plt.xlabel('Number of clusters, k')
+plt.ylabel('Silhouette score')
 plt.xticks(ks)
-plt.savefig(outputFilepath+r"\trumpVolatilityVaryingInertiaKmeans.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"\trumpVolatilityVaryingInertiaKmeans.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # create steps for our pipeline
 pipelineSteps = [('scaler', StandardScaler()),
-                 ('kmeans', KMeans(n_clusters=7))]
+                 ('kmeans', KMeans(n_clusters=2))]
 
 # Create a KMeans model with 3 clusters: model
 model = Pipeline(pipelineSteps)
@@ -526,24 +577,32 @@ model = Pipeline(pipelineSteps)
 clusterLabels = model.fit_predict(xTrain)
 
 # create a df with labels and volatility outcomes
-clusterLabelVoldf = pd.DataFrame({'Cluster Labels': clusterLabels, 'volatilityUp': yTrain})
+clusterLabelVoldf = pd.DataFrame({'Cluster Labels': clusterLabels,
+                                  'volatilityUp': yTrain})
 
 # Create crosstab table
-crossTab = pd.crosstab(clusterLabelVoldf['Cluster Labels'], clusterLabelVoldf['volatilityUp'])
+crossTab = pd.crosstab(clusterLabelVoldf['Cluster Labels'],
+                       clusterLabelVoldf['volatilityUp'])
 print(crossTab)
 
 # add this as a column to our training data
 xTrain['kmeansClusterLabels'] = clusterLabels
 
 # since cluster is a category we need to make dummy columns for every cluster minus 1
-xTrain = pd.get_dummies(xTrain, prefix='kmeansClusterLabel', prefix_sep='_', columns=['kmeansClusterLabels'])
+xTrain = pd.get_dummies(xTrain,
+                        prefix='kmeansClusterLabel',
+                        prefix_sep='_',
+                        columns=['kmeansClusterLabels'])
 
 # let's do this for our test data too, using the model
 # created with the training data
 xTest['kmeansClusterLabels'] = model.predict(xTest)
 
 # now we need to do the same as above and create dummy columns for our test data
-xTest = pd.get_dummies(xTest, prefix='kmeansClusterLabel', prefix_sep='_', columns=['kmeansClusterLabels'])
+xTest = pd.get_dummies(xTest,
+                       prefix='kmeansClusterLabel',
+                       prefix_sep='_',
+                       columns=['kmeansClusterLabels'])
 
 # by creating dummy columns in both sets separately, there is a chance the test set may not
 # contain all the dummy columns created in the test set. To remedy this so we don't have a
@@ -554,18 +613,32 @@ for column in missingColumns:
     xTest[column] = 0
 
 # optimize data for memory consumption (downcast in64s to int16s)
-ints = xTrain.select_dtypes(include=['int64', 'int32']).columns.tolist()
-xTrain[ints] = xTrain[ints].apply(pd.to_numeric, downcast='integer')
+ints = xTrain.select_dtypes(include=['int64',
+                                     'int32'])\
+    .columns\
+    .tolist()
+xTrain[ints] = xTrain[ints].apply(pd.to_numeric,
+                                  downcast='integer')
 
-ints = xTest.select_dtypes(include=['int64', 'int32']).columns.tolist()
-xTest[ints] = xTest[ints].apply(pd.to_numeric, downcast='integer')
+ints = xTest.select_dtypes(include=['int64',
+                                    'int32'])\
+    .columns\
+    .tolist()
+xTest[ints] = xTest[ints].apply(pd.to_numeric,
+                                downcast='integer')
 
 # same for floats
-floats = xTrain.select_dtypes(include=['float']).columns.tolist()
-xTrain[floats] = xTrain[floats].apply(pd.to_numeric, downcast='float')
+floats = xTrain.select_dtypes(include=['float'])\
+    .columns\
+    .tolist()
+xTrain[floats] = xTrain[floats].apply(pd.to_numeric,
+                                      downcast='float')
 
-floats = xTest.select_dtypes(include=['float']).columns.tolist()
-xTest[floats] = xTest[floats].apply(pd.to_numeric, downcast='float')
+floats = xTest.select_dtypes(include=['float'])\
+    .columns\
+    .tolist()
+xTest[floats] = xTest[floats].apply(pd.to_numeric,
+                                    downcast='float')
 
 
 
@@ -589,62 +662,252 @@ xTrain.info()
 # some exploratory questions:
 
 # see if there is significant skew in volatilityUp
-sns.catplot(data=myData, y='volatilityUp', kind='count')
-plt.title('Count of number of days where volatility is up')
-plt.savefig(outputFilepath+r"\trumpVolatilityCountDaysVolatilityUp.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+sns.catplot(data=myData,
+            y='volatilityUp',
+            kind='count')
+plt.title('Count of number of days where volatility is up 2015-2017')
+plt.savefig(outputFilepath+r"\trumpVolatilityCountDaysVolatilityUp.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # how often does Trump tweet per day?
-textCountDF = myData.resample('D').apply({'text' : 'count'})
+textCountDF = myData.resample('D')\
+    .apply({'text' : 'count'})
 plt.style.use('ggplot')
-plt.plot(textCountDF.text, c='blue')
+plt.plot(textCountDF.text,
+         c='blue')
 plt.title('Count of Trump\'s tweets by day 2015-2017\nAn average of ' +
           str(int(round(textCountDF['text'].mean(), 1))) +
           ' tweets per day')
 plt.xlabel('Date')
+plt.xticks(fontsize=10,
+           rotation=45)
 plt.ylabel('Count of Tweets')
-plt.savefig(outputFilepath+r"\trumpVolatilityCountTrumpTweetsPerDayLineplot.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"\trumpVolatilityCountTrumpTweetsPerDayLineplot.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # a probability distribution of the frequency of trumps tweets per day
-plt.hist(textCountDF['text'], bins=textCountDF['text'].max(), density=True)
-plt.title('PDF of count of Trump\'s tweets per day')
+plt.hist(textCountDF['text'],
+         bins=int(textCountDF['text'].max()) // 2,
+         density=True,
+         align='left')
+plt.title('PDF of count of Trump\'s tweets per day 2015-2017')
 plt.ylabel('PDF')
 plt.xlabel('Count of tweets')
-plt.savefig(outputFilepath+r"\trumpVolatilityCountTrumpTweetsPerDayPDF.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.axvline(textCountDF['text'].mean(),
+            color='green',
+            linewidth=2)
+plt.annotate("Mean of\n" + str(round(textCountDF['text'].mean())) + " tweets",
+             xycoords='axes points',
+             color='green',
+             xy=(55,
+                 50),
+             xytext=(200,
+                     100),
+             arrowprops=dict(arrowstyle='->',
+                             color='green',
+                             linewidth=1))
+plt.axvline(textCountDF['text'].median(),
+            color='purple',
+            linewidth=2)
+plt.annotate("Median of\n" + str(round(textCountDF['text'].median())) + " tweets",
+             xycoords='axes points',
+             color='purple',
+             xy=(50,
+                 50),
+             xytext=(200,
+                     200),
+             arrowprops=dict(arrowstyle='->',
+                             color='purple',
+                             linewidth=1))
+plt.savefig(outputFilepath+r"\trumpVolatilityCountTrumpTweetsPerDayPDF.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
+
+# what time of day does trump usually tweet?
+# first we resample to an hour by summing the count of tweets
+textCountTimeDF = myData.resample('60min')\
+    .apply({'text' : 'count'})
+# then we subtract 7 hours to put us back in normal time (vs market time)
+textCountTimeDF.index = textCountTimeDF.index - DateOffset(hours=7)
+print(textCountTimeDF.head())
+# we create an hour column based on the index's hour
+textCountTimeDF['Hour'] = textCountTimeDF.index.hour
+# then we group by our hour, summing the count of text
+textCountTimeDF = textCountTimeDF.groupby('Hour').sum()
+# we then modify the column to divide its value by the sum of the entire column (a percentage)
+textCountTimeDF['text'] = (textCountTimeDF['text'] / textCountTimeDF['text'].sum()) * 100
+print(textCountTimeDF.head())
+plt.style.use('ggplot')
+ax = plt.bar(x=textCountTimeDF.index,
+             height=textCountTimeDF['text'])
+plt.title('Percent of Trump\'s tweets by hour of the day 2015-2017')
+plt.xlabel('Hour of Day')
+plt.ylabel('Percent of tweets by hour of the day')
+plt.savefig(outputFilepath+r"\trumpVolatilityPercentTrumpTweetsPerHourLineplot.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # histogram of the number of all caps words per tweet
-plt.hist(myData['allCaps'], bins=myData['allCaps'].max(), density=True)
-plt.title('Probability distribution of the number of all-caps words per Trump tweet')
+plt.hist(myData['allCaps'],
+         bins=myData['allCaps'].max(),
+         density=True,
+         align='left')
+plt.title('Probability distribution of the number of all-caps\nwords per Trump tweet 2015-2017')
 plt.xlabel('Number of all caps words per Tweet')
 plt.ylabel('PDF')
-plt.savefig(outputFilepath+r"\trumpVolatilityAllCapsPerTweet.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.axvline(myData['allCaps'].mean(),
+            color='green',
+            linewidth=2)
+plt.annotate("Mean of " + str(round(myData['allCaps'].mean())) + "\nall-caps words per tweet",
+             xycoords='axes points',
+             color='green',
+             xy=(45,
+                 50),
+             xytext=(200,
+                     100),
+             arrowprops=dict(arrowstyle='->',
+                             color='green',
+                             linewidth=1))
+plt.axvline(myData['allCaps'].median(),
+            color='purple',
+            linewidth=2)
+plt.annotate("Median of " + str(round(myData['allCaps'].median())) + "\nall-caps words per tweet",
+             xycoords='axes points',
+             color='purple',
+             xy=(40,
+                 50),
+             xytext=(200,
+                     200),
+             arrowprops=dict(arrowstyle='->',
+                             color='purple',
+                             linewidth=1))
+plt.savefig(outputFilepath+r"\trumpVolatilityAllCapsPerTweet.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # histogram of the number of exclamation points per tweet
-plt.hist(myData['exclamationPoints'], bins=myData['exclamationPoints'].max(), density=True)
-plt.title('Probability distribution of the number of exclamation points per Trump tweet')
+plt.hist(myData['exclamationPoints'],
+         bins=myData['exclamationPoints'].max(),
+         density=True,
+         align='left')
+plt.title('Probability distribution of the number of exclamation points\nper Trump tweet 2015-2017')
 plt.xlabel('Number of exclamation points per Tweet')
 plt.ylabel('PDF')
-plt.savefig(outputFilepath+r"\trumpVolatilityExclamationPointsPerTrumpTweet.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.axvline(myData['exclamationPoints'].mean(),
+            color='green',
+            linewidth=2)
+plt.annotate("Mean of " + str(round(myData['exclamationPoints'].mean())) + " exclamation\npoints per tweet",
+             xycoords='axes points',
+             color='green',
+             xy=(45,
+                 50),
+             xytext=(200,
+                     100),
+             arrowprops=dict(arrowstyle='->',
+                             color='green',
+                             linewidth=1))
+plt.axvline(myData['exclamationPoints'].median(),
+            color='purple',
+            linewidth=2)
+plt.annotate("Median of " + str(round(myData['exclamationPoints'].median())) + " exclamation\npoints per tweet",
+             xycoords='axes points',
+             color='purple',
+             xy=(40,
+                 50),
+             xytext=(200,
+                     200),
+             arrowprops=dict(arrowstyle='->',
+                             color='purple',
+                             linewidth=1))
+plt.savefig(outputFilepath+r"\trumpVolatilityExclamationPointsPerTrumpTweet.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # histogram of the number of hashtags per tweet
-plt.hist(myData['hashtags'], bins=myData['hashtags'].max(), density=True)
-plt.title('Probability distribution of the number of hashtags per Trump tweet')
+plt.hist(myData['hashtags'],
+         bins=myData['hashtags'].max(),
+         density=True,
+         align='left')
+plt.title('Probability distribution of the number of hashtags\nper Trump tweet 2015-2017')
 plt.xlabel('Number of all hashtags per Tweet')
 plt.ylabel('PDF')
-plt.savefig(outputFilepath+r"\trumpVolatilityHashtagsPerTweet.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.axvline(myData['hashtags'].mean(),
+            color='green',
+            linewidth=2)
+plt.annotate("Mean of " + str(round(myData['hashtags'].mean())) + "\nhashtags per tweet",
+             xycoords='axes points',
+             color='green',
+             xy=(75,
+                 50),
+             xytext=(200,
+                     100),
+             arrowprops=dict(arrowstyle='->',
+                             color='green',
+                             linewidth=1))
+plt.axvline(myData['hashtags'].median(),
+            color='purple',
+            linewidth=2)
+plt.annotate("Median of " + str(round(myData['hashtags'].median())) + "\nhashtags per tweet",
+             xycoords='axes points',
+             color='purple',
+             xy=(40,
+                 50),
+             xytext=(200,
+                     200),
+             arrowprops=dict(arrowstyle='->',
+                             color='purple',
+                             linewidth=1))
+plt.savefig(outputFilepath+r"\trumpVolatilityHashtagsPerTweet.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # histogram of the number of userHandles per tweet
-plt.hist(myData['userHandleCount'], bins=myData['userHandleCount'].max(), density=True)
-plt.title('Probability distribution of the number of user handle mentions per Trump tweet')
+plt.hist(myData['userHandleCount'],
+         bins=myData['userHandleCount'].max(),
+         density=True,
+         align='left')
+plt.title('Probability distribution of the number of user handle mentions\nper Trump tweet 2015-2017')
 plt.xlabel('Number of user handle mentions per Tweet')
 plt.ylabel('PDF')
-plt.savefig(outputFilepath+r"\trumpVolatilityUserHandleMentionsPerTweet.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.axvline(myData['userHandleCount'].mean(),
+            color='green',
+            linewidth=2)
+plt.annotate("Mean of " + str(round(myData['userHandleCount'].mean())) + " user handle\nmentions per tweet",
+             xycoords='axes points',
+             color='green',
+             xy=(65,
+                 50),
+             xytext=(200,
+                     100),
+             arrowprops=dict(arrowstyle='->',
+                             color='green',
+                             linewidth=1))
+plt.axvline(myData['userHandleCount'].median(),
+            color='purple',
+            linewidth=2)
+plt.annotate("Median of " + str(round(myData['userHandleCount'].median())) + " user handle\nmentions per tweet",
+             xycoords='axes points',
+             color='purple',
+             xy=(40,
+                 50),
+             xytext=(200,
+                     200),
+             arrowprops=dict(arrowstyle='->',
+                             color='purple',
+                             linewidth=1))
+plt.savefig(outputFilepath+r"\trumpVolatilityUserHandleMentionsPerTweet.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # let's make our word clouds in the shape of Trump's head because, why not?
 # I found a free png here: https://www.freeimg.net/photo/868386/trump-donaldtrump-president-usa
@@ -661,12 +924,16 @@ tweetCloud = WordCloud(background_color='gray',
                        mask=trumpMask,
                        contour_width=1,
                        contour_color='orange',
-                       color_func=trumpColors).generate_from_frequencies(allTextCount)
-plt.imshow(tweetCloud, interpolation='bilinear')
+                       color_func=trumpColors)\
+    .generate_from_frequencies(allTextCount)
+plt.imshow(tweetCloud,
+           interpolation='bilinear')
 plt.axis('off')
-plt.title("Most popular words in Trump's Tweets")
-plt.savefig(outputFilepath+r"\trumpVolatilityMostPopularWords.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.title("Most popular words in Trump's Tweets\n2015-2017")
+plt.savefig(outputFilepath+r"\trumpVolatilityMostPopularWords.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # let's do a wordcloud of the nouns used by Trump's tweets, with a different picture
 imagePath = r"C:\Users\sebid\OneDrive\Desktop\Donald_Trump_(25320945544).jpg"
@@ -687,16 +954,20 @@ tweetCloud = WordCloud(background_color='gray',
                        max_words=2000,
                        mask=trumpMask,
                        contour_width=1,
-                       contour_color='orange').generate_from_frequencies(allTextNounCount)
+                       contour_color='orange')\
+    .generate_from_frequencies(allTextNounCount)
 
 # add colors
 trumpColors = ImageColorGenerator(trumpColors)
 tweetCloud.recolor(color_func=trumpColors)
-plt.imshow(tweetCloud, interpolation="bilinear")
+plt.imshow(tweetCloud,
+           interpolation="bilinear")
 plt.axis('off')
-plt.title("Most popular nouns in Trump's tweets")
-plt.savefig(outputFilepath+r"\trumpVolatilityMostPopularNouns.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.title("Most popular nouns in Trump's tweets\n2015-2017")
+plt.savefig(outputFilepath+r"\trumpVolatilityMostPopularNouns.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 
 
@@ -717,10 +988,14 @@ plt.clf()
 
 
 # now let's convert our pandas dataFrames to Dask dataFrames
-xTrain = dd.from_pandas(xTrain, npartitions=multiprocessing.cpu_count() * 2)
-xTest = dd.from_pandas(xTest, npartitions=multiprocessing.cpu_count() * 2)
-yTrain = dd.from_pandas(yTrain, npartitions=multiprocessing.cpu_count() * 2)
-yTest = dd.from_pandas(yTest, npartitions=multiprocessing.cpu_count() * 2)
+xTrain = dd.from_pandas(xTrain,
+                        npartitions=multiprocessing.cpu_count() * 2)
+xTest = dd.from_pandas(xTest,
+                       npartitions=multiprocessing.cpu_count() * 2)
+yTrain = dd.from_pandas(yTrain,
+                        npartitions=multiprocessing.cpu_count() * 2)
+yTest = dd.from_pandas(yTest,
+                       npartitions=multiprocessing.cpu_count() * 2)
 
 # here we want to make a list containing all the column names in order from left to right
 # so that we can look at feature names on our baseline log reg variable importance graph later
@@ -746,14 +1021,19 @@ xTest = csr_matrix(xTest)
 
 # here is a list of tuples for our pipeline steps.
 pipelineSteps = [('scaler', ParallelPostFit(StandardScaler(with_mean=False))),
-                 ('logReg', ParallelPostFit(estimator=LogisticRegression(max_iter=10000)))]
+                 ('logReg', ParallelPostFit(estimator=LogisticRegression(max_iter=10000,
+                                                                         solver='saga',
+                                                                         n_jobs=-1,
+                                                                         random_state=42)))]
 
 # establish a pipeline object that will perform the above steps
 baselineLogRegPipeline = Pipeline(pipelineSteps)
 
 # create our baseline logistic regression model
-with joblib.parallel_backend('threading', n_jobs=-1):
-    baselineLogReg = baselineLogRegPipeline.fit(xTrain, yTrain)
+with joblib.parallel_backend('threading',
+                             n_jobs=-1):
+    baselineLogReg = baselineLogRegPipeline.fit(xTrain,
+                                                yTrain)
 
 # create our prediction data
 yPred = baselineLogReg.predict(xTest)
@@ -762,32 +1042,42 @@ yPred = baselineLogReg.predict(xTest)
 yPredProb = baselineLogReg.predict_proba(xTest)[:, 1]
 
 # create ROC curve values from predicted probabilities
-fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+fpr, tpr, thresholds = roc_curve(yTest,
+                                 yPredProb)
 
 # score our baseline logistic regression model
-baselineLogRegScore = accuracy_score(yTest, yPred)
+baselineLogRegScore = accuracy_score(yTest,
+                                     yPred)
 
 # create our ROC AUC score
-rocAuc = roc_auc_score(yTest, yPredProb)
+rocAuc = roc_auc_score(yTest,
+                       yPredProb)
 
 print("\nBASELINE LOGISTIC REGRESSION\nACCURACY SCORE:\n")
 print(baselineLogRegScore)
 print("\nBASELINE LOGISTIC REGRESSION\nAUC SCORES:\n")
 print(rocAuc)
 print("\nBASELINE LOGISTIC REGRESSION\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest, yPred))
+print(confusion_matrix(yTest,
+                       yPred))
 print("\nBASELINE LOGISTIC REGRESSION\nCLASSIFICATION REPORT:\n")
-print(classification_report(yTest, yPred))
+print(classification_report(yTest,
+                            yPred))
 
 # plot ROC curve for our model
-plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr, tpr)
+plt.plot([0, 1],
+         [0, 1],
+         'k--')
+plt.plot(fpr,
+         tpr)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
 plt.title('ROC for Baseline Logistic Regression')
-plt.savefig(outputFilepath+r"\trumpVolatilityROCBaselineLogisticRegression.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"\trumpVolatilityROCBaselineLogisticRegression.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # plot feature importance for the 20 most important features
 # create dataframe containing column names and feature coefficients
@@ -795,10 +1085,12 @@ featureImportance = pd.DataFrame({'variable' : xColNames,
                                   'featureImportance' : baselineLogReg['logReg'].coef_[0]})
 
 # let's narrow this dataFrame down to the 20 most
-featureImportance = featureImportance.nlargest(20, 'featureImportance')
+featureImportance = featureImportance.nlargest(20,
+                                               'featureImportance')
 
 # now let's plot our coefficients
-plt.plot(featureImportance['variable'], featureImportance['featureImportance'])
+plt.plot(featureImportance['variable'],
+         featureImportance['featureImportance'])
 plt.title("Top twenty most important independent variables for\n"
           "Baseline Logistic Regression Model\n"
           "(coefficient values)")
@@ -806,8 +1098,10 @@ plt.xlabel("Variable Name")
 plt.xticks(rotation=45)
 plt.ylabel("Coefficient Value")
 plt.margins(0.02)
-plt.savefig(outputFilepath+r"\trumpVolatilityFeatureImportanceBaselineLogisticRegression.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"\trumpVolatilityFeatureImportanceBaselineLogisticRegression.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 
 ################################
@@ -828,20 +1122,30 @@ plt.clf()
 
 # create a parameter grid for our grid search CV
 paramGrid = {
-    'svd__estimator__n_components' : np.arange(50, 601, 10)
+    'svd__estimator__n_components' : np.arange(40,
+                                               121,
+                                               2)
 }
 
 # here is a list of tuples for our pipeline steps.
 pipelineSteps = [('scaler', ParallelPostFit(StandardScaler(with_mean=False))),
                  ('svd', ParallelPostFit(TruncatedSVD(random_state=42))),
-                 ('logReg', ParallelPostFit(LogisticRegression(max_iter=10000)))]
+                 ('logReg', ParallelPostFit(LogisticRegression(max_iter=10000,
+                                                               solver='saga',
+                                                               n_jobs=-1,
+                                                               random_state=42)))]
 
 pipeline = Pipeline(pipelineSteps)
 
-svdSearch = GridSearchCV(pipeline, param_grid=paramGrid, n_jobs=-1, cv=5)
+svdSearch = GridSearchCV(pipeline,
+                         param_grid=paramGrid,
+                         n_jobs=-1,
+                         cv=5)
 
-with joblib.parallel_backend('threading', n_jobs=-1):
-    svdSearch.fit(xTrain, yTrain)
+with joblib.parallel_backend('threading',
+                             n_jobs=-1):
+    svdSearch.fit(xTrain,
+                  yTrain)
 
 # Print the tuned parameters and score
 print("SVD selection for number of features: {}".format(svdSearch.best_params_))
@@ -857,15 +1161,21 @@ nComponents = svdSearch.best_params_['svd__estimator__n_components']
 
 # here is a list of tuples for our pipeline steps.
 pipelineSteps = [('scaler', ParallelPostFit(StandardScaler(with_mean=False))),
-                 ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents, random_state=42))),
-                 ('logReg', ParallelPostFit(LogisticRegression(max_iter=10000)))]
+                 ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents,
+                                                      random_state=42))),
+                 ('logReg', ParallelPostFit(LogisticRegression(max_iter=10000,
+                                                               solver='saga',
+                                                               n_jobs=-1,
+                                                               random_state=42)))]
 
 # establish a pipeline object that will perform the above steps
 SVDPipeline = Pipeline(pipelineSteps)
 
 # create our SVD logistic regression model
-with joblib.parallel_backend('threading', n_jobs=-1):
-    logRegSVD = SVDPipeline.fit(xTrain, yTrain)
+with joblib.parallel_backend('threading',
+                             n_jobs=-1):
+    logRegSVD = SVDPipeline.fit(xTrain,
+                                yTrain)
 
 # create our prediction data
 yPred = logRegSVD.predict(xTest)
@@ -874,32 +1184,42 @@ yPred = logRegSVD.predict(xTest)
 yPredProb = logRegSVD.predict_proba(xTest)[:, 1]
 
 # create ROC curve values from predicted probabilities
-fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+fpr, tpr, thresholds = roc_curve(yTest,
+                                 yPredProb)
 
 # score our baseline logistic regression model
-logRegSVDScore = accuracy_score(yTest, yPred)
+logRegSVDScore = accuracy_score(yTest,
+                                yPred)
 
 # create our ROC AUC score
-rocAuc = roc_auc_score(yTest, yPredProb)
+rocAuc = roc_auc_score(yTest,
+                       yPredProb)
 
 print("\nLOGISTIC REGRESSION WITH SVD\nACCURACY SCORE:\n")
 print(baselineLogRegScore)
 print("\nLOGISTIC REGRESSION WITH SVD\nAUC SCORES:\n")
 print(rocAuc)
 print("\nLOGISTIC REGRESSION WITH SVD\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest, yPred))
+print(confusion_matrix(yTest,
+                       yPred))
 print("\nLOGISTIC REGRESSION WITH SVD\nCLASSIFICATION REPORT:\n")
-print(classification_report(yTest, yPred))
+print(classification_report(yTest,
+                            yPred))
 
 # plot ROC curve for our model
-plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr, tpr)
+plt.plot([0, 1],
+         [0, 1],
+         'k--')
+plt.plot(fpr,
+         tpr)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
 plt.title('ROC for Logistic Regression with SVD')
-plt.savefig(outputFilepath+r"\trumpVolatilityROCBaselineLogisticRegressionWithSVD.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"\trumpVolatilityROCBaselineLogisticRegressionWithSVD.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 
 ###################################
@@ -911,23 +1231,38 @@ plt.clf()
 
 # create a parameter grid for our grid search CV
 paramGrid = {
-    'logReg__estimator__C' : np.logspace(-4, 4, 20)
+    'logReg__estimator__C' : np.logspace(-4,
+                                         4,
+                                         20),
+    'logReg__estimator__l1_ratio' : np.linspace(0,
+                                                1,
+                                                100)
 }
 
 # here is a list of tuples for our pipeline steps.
 pipelineSteps = [('scaler', ParallelPostFit(StandardScaler(with_mean=False))),
-                 ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents, random_state=42))),
-                 ('logReg', ParallelPostFit(LogisticRegression(max_iter=20000)))]
+                 ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents,
+                                                      random_state=42))),
+                 ('logReg', ParallelPostFit(LogisticRegression(max_iter=20000,
+                                                               solver='saga',
+                                                               penalty='elasticnet',
+                                                               n_jobs=-1,
+                                                               random_state=42)))]
 
 # establish a pipeline object that will perform the above steps
 tunedLogRegPipeline = Pipeline(pipelineSteps)
 
 # now we go through a grid search crossvalidation on our model using the hyper parameters
-tunedLogReg = GridSearchCV(tunedLogRegPipeline, param_grid=paramGrid, n_jobs=-1, cv=5)
+tunedLogReg = GridSearchCV(tunedLogRegPipeline,
+                           param_grid=paramGrid,
+                           n_jobs=-1,
+                           cv=5)
 
 # fit our tuned logistic regression model
-with joblib.parallel_backend('threading', n_jobs=-1):
-    tunedLogReg.fit(xTrain, yTrain)
+with joblib.parallel_backend('threading',
+                             n_jobs=-1):
+    tunedLogReg.fit(xTrain,
+                    yTrain)
 
 # create our prediction data
 yPred = tunedLogReg.predict(xTest)
@@ -936,13 +1271,16 @@ yPred = tunedLogReg.predict(xTest)
 yPredProb = tunedLogReg.predict_proba(xTest)[:, 1]
 
 # create ROC curve values from predicted probabilities
-fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+fpr, tpr, thresholds = roc_curve(yTest,
+                                 yPredProb)
 
 # score our tuned logistic regression model
-tunedLogRegScore = accuracy_score(yTest, yPred)
+tunedLogRegScore = accuracy_score(yTest,
+                                  yPred)
 
 # create our ROC AUC score
-rocAuc = roc_auc_score(yTest, yPredProb)
+rocAuc = roc_auc_score(yTest,
+                       yPredProb)
 
 # Print the tuned parameters and score
 print("TUNED LOGISTIC REGRESSION HYPERPARAMETERS: {}".format(tunedLogReg.best_params_))
@@ -952,19 +1290,26 @@ print(tunedLogRegScore)
 print("\nTUNED LOGISTIC REGRESSION\nAUC SCORE:\n")
 print(rocAuc)
 print("\nTUNED LOGISTIC REGRESSION\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest, yPred))
+print(confusion_matrix(yTest,
+                       yPred))
 print("\nTUNED LOGISTIC REGRESSION\nCLASSIFICATION REPORT:\n")
-print(classification_report(yTest, yPred))
+print(classification_report(yTest,
+                            yPred))
 
 # plot ROC curve for our model
-plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr, tpr)
+plt.plot([0, 1],
+         [0, 1],
+         'k--')
+plt.plot(fpr,
+         tpr)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
 plt.title('ROC for Tuned Logistic Regression')
-plt.savefig(outputFilepath+r"/trumpVolatilityROCTunedLogisticRegression.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"/trumpVolatilityROCTunedLogisticRegression.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 
 ############################
@@ -976,25 +1321,37 @@ plt.clf()
 
 # create a parameter grid for our grid search CV
 paramGrid = {
-    'decisionTree__estimator__criterion' : ["gini", "entropy"],
-    'decisionTree__estimator__max_depth' : np.arange(2, 101, 1),
-    'decisionTree__estimator__min_samples_split' : np.arange(2, 41, 1)
+    'decisionTree__estimator__criterion' : ["gini",
+                                            "entropy"],
+    'decisionTree__estimator__max_depth' : np.arange(2,
+                                                     101,
+                                                     1),
+    'decisionTree__estimator__min_samples_split' : np.arange(2,
+                                                             41,
+                                                             1)
 }
 
 # here is a list of tuples for our pipeline steps.
 pipelineSteps = [('scaler', ParallelPostFit(StandardScaler(with_mean=False))),
-                 ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents, random_state=42))),
+                 ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents,
+                                                      random_state=42))),
                  ('decisionTree', ParallelPostFit(DecisionTreeClassifier(random_state=42)))]
 
 # establish a pipeline object that will perform the above steps
 decisionTreePipeline = Pipeline(pipelineSteps)
 
 # now we go through a grid search crossvalidation on our model using the hyper parameters
-decisionTree = RandomizedSearchCV(decisionTreePipeline, param_distributions=paramGrid, n_jobs=-1, cv=5, n_iter=60)
+decisionTree = RandomizedSearchCV(decisionTreePipeline,
+                                  param_distributions=paramGrid,
+                                  n_jobs=-1,
+                                  cv=5,
+                                  n_iter=60)
 
 # fit our decision tree classifier model
-with joblib.parallel_backend('threading', n_jobs=-1):
-    decisionTree.fit(xTrain, yTrain)
+with joblib.parallel_backend('threading',
+                             n_jobs=-1):
+    decisionTree.fit(xTrain,
+                     yTrain)
 
 # create our prediction data
 yPred = decisionTree.predict(xTest)
@@ -1003,13 +1360,16 @@ yPred = decisionTree.predict(xTest)
 yPredProb = decisionTree.predict_proba(xTest)[:, 1]
 
 # create ROC curve values from predicted probabilities
-fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+fpr, tpr, thresholds = roc_curve(yTest,
+                                 yPredProb)
 
 # score our tuned logistic regression model
-decisionTreeScore = accuracy_score(yTest, yPred)
+decisionTreeScore = accuracy_score(yTest,
+                                   yPred)
 
 # create our ROC AUC score
-rocAuc = roc_auc_score(yTest, yPredProb)
+rocAuc = roc_auc_score(yTest,
+                       yPredProb)
 
 # Print the tuned parameters and score
 print("TUNED DECISION TREE CLASSIFIER HYPERPARAMETERS: {}".format(decisionTree.best_params_))
@@ -1019,19 +1379,26 @@ print(decisionTreeScore)
 print("\nTUNED DECISION TREE CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
 print("\nTUNED DECISION TREE CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest, yPred))
+print(confusion_matrix(yTest,
+                       yPred))
 print("\nTUNED DECISION TREE CLASSIFIER\nCLASSIFICATION REPORT:\n")
-print(classification_report(yTest, yPred))
+print(classification_report(yTest,
+                            yPred))
 
 # plot ROC curve for our model
-plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr, tpr)
+plt.plot([0, 1],
+         [0, 1],
+         'k--')
+plt.plot(fpr,
+         tpr)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
 plt.title('ROC for Tuned Decision Tree Classifier')
-plt.savefig(outputFilepath+r"\trumpVolatilityROCDecisionTree.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"\trumpVolatilityROCDecisionTree.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 
 ############################
@@ -1043,8 +1410,11 @@ plt.clf()
 
 # create a parameter grid for our grid search CV
 paramGrid = {
-    'randomForest__estimator__n_estimators' : [500, 1000, 2000, 5000],
-    'randomForest__estimator__max_features' : ['log2', 'auto', 'sqrt']
+    'randomForest__estimator__n_estimators' : [400,
+                                               500,
+                                               600],
+    'randomForest__estimator__max_features' : ['log2',
+                                               'sqrt']
 }
 
 # here is a list of tuples for our pipeline steps.
@@ -1057,11 +1427,16 @@ pipelineSteps = [('scaler', ParallelPostFit(StandardScaler(with_mean=False))),
 randomForestPipeline = Pipeline(pipelineSteps)
 
 # now we go through a grid search crossvalidation on our model using the hyper parameters
-randomForest = GridSearchCV(randomForestPipeline, param_grid=paramGrid, n_jobs=-1, cv=5)
+randomForest = GridSearchCV(randomForestPipeline,
+                            param_grid=paramGrid,
+                            n_jobs=-1,
+                            cv=5)
 
 # fit our random forest classifier model
-with joblib.parallel_backend('threading', n_jobs=-1):
-    randomForest.fit(xTrain, yTrain)
+with joblib.parallel_backend('threading',
+                             n_jobs=-1):
+    randomForest.fit(xTrain,
+                     yTrain)
 
 # create our prediction data
 yPred = randomForest.predict(xTest)
@@ -1070,13 +1445,16 @@ yPred = randomForest.predict(xTest)
 yPredProb = randomForest.predict_proba(xTest)[:, 1]
 
 # create ROC curve values from predicted probabilities
-fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+fpr, tpr, thresholds = roc_curve(yTest,
+                                 yPredProb)
 
 # score our tuned logistic regression model
-randomForestScore = accuracy_score(yTest, yPred)
+randomForestScore = accuracy_score(yTest,
+                                   yPred)
 
 # create our ROC AUC score
-rocAuc = roc_auc_score(yTest, yPredProb)
+rocAuc = roc_auc_score(yTest,
+                       yPredProb)
 
 # Print the tuned parameters and score
 print("TUNED RANDOM FOREST CLASSIFIER HYPERPARAMETERS: {}".format(randomForest.best_params_))
@@ -1086,19 +1464,26 @@ print(randomForestScore)
 print("\nTUNED RANDOM FOREST CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
 print("\nTUNED RANDOM FOREST CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest, yPred))
+print(confusion_matrix(yTest,
+                       yPred))
 print("\nTUNED RANDOM FOREST CLASSIFIER\nCLASSIFICATION REPORT:\n")
-print(classification_report(yTest, yPred))
+print(classification_report(yTest,
+                            yPred))
 
 # plot ROC curve for our model
-plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr, tpr)
+plt.plot([0, 1],
+         [0, 1],
+         'k--')
+plt.plot(fpr,
+         tpr)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
 plt.title('ROC for Tuned Random Forest Classifier')
-plt.savefig(outputFilepath+r"\trumpVolatilityROCRandomForest.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"\trumpVolatilityROCRandomForest.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 
 ########################
@@ -1110,7 +1495,9 @@ plt.clf()
 
 # create a parameter grid for our grid search CV
 paramGrid = {
-    'adaBoost__estimator__n_estimators' : np.arange(50, 1001, 50)
+    'adaBoost__estimator__n_estimators' : np.arange(50,
+                                                    1001,
+                                                    25)
 }
 
 # here is a list of tuples for our pipeline steps.
@@ -1123,11 +1510,16 @@ pipelineSteps = [('scaler', ParallelPostFit(StandardScaler(with_mean=False))),
 adaBoostPipeline = Pipeline(pipelineSteps)
 
 # now we go through a grid search crossvalidation on our model using the hyper parameters
-adaBoost = GridSearchCV(adaBoostPipeline, param_grid=paramGrid, n_jobs=-1, cv=5)
+adaBoost = GridSearchCV(adaBoostPipeline,
+                        param_grid=paramGrid,
+                        n_jobs=-1,
+                        cv=5)
 
 # fit our random forest classifier model
-with joblib.parallel_backend('threading', n_jobs=-1):
-    adaBoost.fit(xTrain, yTrain)
+with joblib.parallel_backend('threading',
+                             n_jobs=-1):
+    adaBoost.fit(xTrain,
+                 yTrain)
 
 # create our prediction data
 yPred = adaBoost.predict(xTest)
@@ -1136,13 +1528,16 @@ yPred = adaBoost.predict(xTest)
 yPredProb = adaBoost.predict_proba(xTest)[:, 1]
 
 # create ROC curve values from predicted probabilities
-fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+fpr, tpr, thresholds = roc_curve(yTest,
+                                 yPredProb)
 
 # score our tuned adaboost model
-adaBoostScore = accuracy_score(yTest, yPred)
+adaBoostScore = accuracy_score(yTest,
+                               yPred)
 
 # create our ROC AUC score
-rocAuc = roc_auc_score(yTest, yPredProb)
+rocAuc = roc_auc_score(yTest,
+                       yPredProb)
 
 # Print the tuned parameters and score
 print("TUNED ADABOOST CLASSIFIER HYPERPARAMETERS: {}".format(adaBoost.best_params_))
@@ -1152,32 +1547,43 @@ print(adaBoostScore)
 print("\nTUNED ADABOOST CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
 print("\nTUNED ADABOOST CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest, yPred))
+print(confusion_matrix(yTest,
+                       yPred))
 print("\nTUNED ADABOOST CLASSIFIER\nCLASSIFICATION REPORT:\n")
-print(classification_report(yTest, yPred))
+print(classification_report(yTest,
+                            yPred))
 
 # plot ROC curve for our model
-plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr, tpr)
+plt.plot([0, 1],
+         [0, 1],
+         'k--')
+plt.plot(fpr,
+         tpr)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
 plt.title('ROC for Tuned AdaBoost Classifier')
-plt.savefig(outputFilepath+r"\trumpVolatilityROCAdaBoost.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"\trumpVolatilityROCAdaBoost.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 
-##############################################
-# Gradient Boosted Decision Trees Classifier #
-##############################################
+########################################################
+# Stochastic Gradient Boosted Decision Tree Classifier #
+########################################################
 
 
-# this is a gradient boosted decision tree classifier with hyperparameter tuning
+# this is a stochastic gradient boosted decision tree classifier with hyperparameter tuning
 
 # create a parameter grid for our grid search CV
 paramGrid = {
-    'gradientBoost__estimator__n_estimators' : np.arange(10, 101, 10),
-    'gradientBoost__estimator__subsample' : np.arange(0.4, 1.01, 0.1)
+    'gradientBoost__estimator__n_estimators' : np.arange(10,
+                                                         101,
+                                                         5),
+    'gradientBoost__estimator__subsample' : np.arange(0.4,
+                                                      1.01,
+                                                      0.1)
 }
 
 # here is a list of tuples for our pipeline steps.
@@ -1190,11 +1596,16 @@ pipelineSteps = [('scaler', ParallelPostFit(StandardScaler(with_mean=False))),
 gradientBoostPipeline = Pipeline(pipelineSteps)
 
 # now we go through a grid search crossvalidation on our model using the hyper parameters
-gradientBoost = GridSearchCV(gradientBoostPipeline, param_grid=paramGrid, n_jobs=-1, cv=5)
+gradientBoost = GridSearchCV(gradientBoostPipeline,
+                             param_grid=paramGrid,
+                             n_jobs=-1,
+                             cv=5)
 
 # fit our random forest classifier model
-with joblib.parallel_backend('threading', n_jobs=-1):
-    gradientBoost.fit(xTrain, yTrain)
+with joblib.parallel_backend('threading',
+                             n_jobs=-1):
+    gradientBoost.fit(xTrain,
+                      yTrain)
 
 # create our prediction data
 yPred = gradientBoost.predict(xTest)
@@ -1203,48 +1614,63 @@ yPred = gradientBoost.predict(xTest)
 yPredProb = gradientBoost.predict_proba(xTest)[:, 1]
 
 # create ROC curve values from predicted probabilities
-fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+fpr, tpr, thresholds = roc_curve(yTest,
+                                 yPredProb)
 
 # score our tuned adaboost model
-gradientBoostScore = accuracy_score(yTest, yPred)
+gradientBoostScore = accuracy_score(yTest,
+                                    yPred)
 
 # create our ROC AUC score
-rocAuc = roc_auc_score(yTest, yPredProb)
+rocAuc = roc_auc_score(yTest,
+                       yPredProb)
 
 # Print the tuned parameters and score
-print("TUNED GRADIENT BOOSTED DECISION TREE CLASSIFIER HYPERPARAMETERS: {}".format(gradientBoost.best_params_))
+print("TUNED STOCHASTIC GRADIENT BOOSTED DECISION TREE CLASSIFIER HYPERPARAMETERS: {}".format(gradientBoost.best_params_))
 print("Best score is {}".format(gradientBoost.best_score_))
-print("\nTUNED GRADIENT BOOSTED DECISION TREE CLASSIFIER\nACCURACY SCORE:\n")
+print("\nTUNED STOCHASTIC GRADIENT BOOSTED DECISION TREE CLASSIFIER\nACCURACY SCORE:\n")
 print(gradientBoostScore)
-print("\nTUNED GRADIENT BOOSTED DECISION TREE CLASSIFIER\nAUC SCORE:\n")
+print("\nTUNED STOCHASTIC GRADIENT BOOSTED DECISION TREE CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
-print("\nTUNED GRADIENT BOOSTED DECISION TREE CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest, yPred))
-print("\nTUNED GRADIENT BOOSTED DECISION TREE CLASSIFIER\nCLASSIFICATION REPORT:\n")
-print(classification_report(yTest, yPred))
+print("\nTUNED STOCHASTIC GRADIENT BOOSTED DECISION TREE CLASSIFIER\nCONFUSION MATRIX:\n")
+print(confusion_matrix(yTest,
+                       yPred))
+print("\nTUNED STOCHASTIC GRADIENT BOOSTED DECISION TREE CLASSIFIER\nCLASSIFICATION REPORT:\n")
+print(classification_report(yTest,
+                            yPred))
 
 # plot ROC curve for our model
-plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr, tpr)
+plt.plot([0, 1],
+         [0, 1],
+         'k--')
+plt.plot(fpr,
+         tpr)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
-plt.title('ROC for Tuned Gradient Boosted Decision Tree Classifier')
-plt.savefig(outputFilepath+r"\trumpVolatilityROCGradientBoost.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.title('ROC for Tuned Stochastic Gradient Boosted Decision Tree Classifier')
+plt.savefig(outputFilepath+r"\trumpVolatilityROCGradientBoost.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 
 ####################################
 # Ensemble Model Voting Classifier #
 ####################################
 
+
 # this is an ensemble model consisting of our earlier models input into a
 # voting classifier with hyperparameter tuning
 
 # here is a list of our previous estimators.
 classifierModels = [('tunedLogReg', LogisticRegression(C=tunedLogReg.best_params_['logReg__estimator__C'],
+                                                       penalty='elasticnet',
+                                                       l1_ratio=tunedLogReg.best_params_['logReg__estimator__l1_ratio'],
                                                        max_iter=20000,
-                                                       n_jobs=-1)),
+                                                       n_jobs=-1,
+                                                       random_state=42,
+                                                       solver='saga')),
                  ('decisionTree', DecisionTreeClassifier(random_state=42,
                                                          criterion=decisionTree.best_params_['decisionTree__estimator__criterion'],
                                                          max_depth=decisionTree.best_params_['decisionTree__estimator__max_depth'],
@@ -1259,20 +1685,43 @@ classifierModels = [('tunedLogReg', LogisticRegression(C=tunedLogReg.best_params
                                                                  n_estimators=gradientBoost.best_params_['gradientBoost__estimator__n_estimators'],
                                                                  subsample=gradientBoost.best_params_['gradientBoost__estimator__subsample']))]
 
+# we want our voting classifier to have weighted voting based on our accuracy score
+# first we intialize our sum of scores variable
+sumScores = 0
+
+# now we create our list of scores
+weightList = [tunedLogRegScore,
+              decisionTreeScore,
+              randomForestScore,
+              adaBoostScore,
+              gradientBoostScore]
+
+# now we do a lil for loop to add the scores up
+for score in weightList:
+    sumScores += score
+
+# now we do another lil for loop to find our weights by dividing each score by the sum of scores
+weightList = [score / sumScores for score in weightList]
+
+print("The following weights will be applied to the vote of each model (in order): " + str(weightList))
+
 # here is a list of tuples for our pipeline steps.
 pipelineSteps = [('scaler', ParallelPostFit(StandardScaler(with_mean=False))),
                  ('svd', ParallelPostFit(TruncatedSVD(n_components=nComponents,
                                                       random_state=42))),
                  ('votingClassifier', ParallelPostFit(VotingClassifier(estimators=classifierModels,
                                                                        n_jobs=-1,
-                                                                       voting='soft')))]
+                                                                       voting='soft',
+                                                                       weights=weightList)))]
 
 # now we go through a grid search crossvalidation on our model using the hyper parameters
 votingClassifier = Pipeline(pipelineSteps)
 
 # fit our tuned logistic regression model
-with joblib.parallel_backend('threading', n_jobs=-1):
-    votingClassifier.fit(xTrain, yTrain)
+with joblib.parallel_backend('threading',
+                             n_jobs=-1):
+    votingClassifier.fit(xTrain,
+                         yTrain)
 
 # create our prediction data
 yPred = votingClassifier.predict(xTest)
@@ -1281,32 +1730,63 @@ yPred = votingClassifier.predict(xTest)
 yPredProb = votingClassifier.predict_proba(xTest)[:, 1]
 
 # create ROC curve values from predicted probabilities
-fpr, tpr, thresholds = roc_curve(yTest, yPredProb)
+fpr, tpr, thresholds = roc_curve(yTest,
+                                 yPredProb)
 
 # score our tuned logistic regression model
-votingClassifierScore = accuracy_score(yTest, yPred)
+votingClassifierScore = accuracy_score(yTest,
+                                       yPred)
 
 # create our ROC AUC score
-rocAuc = roc_auc_score(yTest, yPredProb)
+rocAuc = roc_auc_score(yTest,
+                       yPredProb)
 
 # Print the tuned parameters and score
-#print("MODEL ENSEMBLE VOTING CLASSIFIER HYPERPARAMETERS: {}".format(votingClassifier.best_params_))
-#print("Best score is {}".format(votingClassifier.best_score_))
 print("\nMODEL ENSEMBLE VOTING CLASSIFIER\nACCURACY SCORE:\n")
 print(decisionTreeScore)
 print("\nMODEL ENSEMBLE VOTING CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
 print("\nMODEL ENSEMBLE VOTING CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest, yPred))
+print(confusion_matrix(yTest,
+                       yPred))
 print("\nMODEL ENSEMBLE VOTING CLASSIFIER\nCLASSIFICATION REPORT:\n")
-print(classification_report(yTest, yPred))
+print(classification_report(yTest,
+                            yPred))
 
 # plot ROC curve for our model
-plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr, tpr)
+plt.plot([0, 1],
+         [0, 1],
+         'k--')
+plt.plot(fpr,
+         tpr)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
 plt.title('ROC for Model Ensemble Voting Classifier')
-plt.savefig(outputFilepath+r"\trumpVolatilityROCVotingClassifier.jpeg", dpi=dpiSettings, bbox_inches='tight')
-plt.clf()
+plt.savefig(outputFilepath+r"\trumpVolatilityROCVotingClassifier.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
+
+
+
+
+#########################
+#########################
+## Close Standard Out ###
+#########################
+#########################
+
+
+
+
+# grab our end time and subtract our start time to get elapsed time for this program
+endTime = time.time()
+print("Program ended at: " + str(endTime))
+print("Total program running time: " + str(endTime - startTime))
+
+# re-establish out system out
+sys.stdout = oldStdOut
+
+# close connection to our log file text document
+logFile.close()
