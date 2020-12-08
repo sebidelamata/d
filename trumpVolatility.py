@@ -74,7 +74,7 @@ from nltk import pos_tag
 import yfinance as yf
 
 # other data cleaning
-from datetime import timezone
+import datetime as dt
 from pandas.tseries.offsets import DateOffset
 from scipy.sparse import csr_matrix
 
@@ -119,7 +119,7 @@ oldStdOut = sys.stdout
 outputFilepath = r"C:\Users\sebid\OneDrive\Desktop\trumpVolatilityOutput"
 
 # establish the specific path of our log fil text document
-logFilePath = outputFilepath + r"\trumpVolatilityLogFile.txt"
+logFilePath = outputFilepath + r"\trumpVolatilityLogFile_" + str(dt.date.today()) + r".txt"
 
 # connect to our logfile
 logFile = open(logFilePath, 'w', encoding='utf-8')
@@ -234,15 +234,15 @@ for df in dfList:
     # which take a little longer to close, and which the VIX price is based on, in addition, some
     # brokerages offer "after-hours" trading within the comfort of their dark pools. This being said, If the
     # Don decides to tweet a though-provoking novela after five, prices aren't really going to change until
-    # the next day, and our closing price doesn't happen until 5pm of that next day. Practically speaking,
-    # this means our trading "day" should probably start at 5pm after the markets close, and end 5pm the
-    # next day at market close. To account for this, we will shift all of the Don's tweets forward 2 hours,
-    # so that 5pm becomes the new "midnight" (start/end of our day). This way if he tweets something after
+    # the next day, and our closing price doesn't happen until 4pm of that next day. Practically speaking,
+    # this means our trading "day" should probably start at 4m after the markets close, and end 4pm the
+    # next day at market close. To account for this, we will shift all of the Don's tweets forward 3 hours,
+    # so that 4pm becomes the new "midnight" (start/end of our day). This way if he tweets something after
     # market close, those tweets will be the independent variables to predict then next available close price.
     # Sorry if that was really wordy for what is essentially just the one line of code that follows this comment,
     # but this is a pretty big modification to the data if you think about it, and if I pushed all the tweets
-    # two hours forward I figured like that would trigger some alarms about that being suspicious.
-    df['created_at'] = df['created_at'] + DateOffset(hours=2)
+    # three hours forward I figured that would trigger some alarms about that being suspicious without explanation.
+    df['created_at'] = df['created_at'] + DateOffset(hours=3)
     df.set_index('created_at',
                  inplace=True)
     df.drop(columns=['contributors',
@@ -665,8 +665,8 @@ xTrain.info()
 sns.catplot(data=myData,
             y='volatilityUp',
             kind='count')
-plt.title('Count of number of days where volatility is up 2015-2017')
-plt.savefig(outputFilepath+r"\trumpVolatilityCountDaysVolatilityUp.jpeg",
+plt.title('Count of number of tweets where volatility is up 2015-2017')
+plt.savefig(outputFilepath+r"\trumpVolatilityCountTweetsVolatilityUp.jpeg",
             dpi=dpiSettings,
             bbox_inches='tight')
 plt.close()
@@ -732,8 +732,8 @@ plt.close()
 # first we resample to an hour by summing the count of tweets
 textCountTimeDF = myData.resample('60min')\
     .apply({'text' : 'count'})
-# then we subtract 7 hours to put us back in normal time (vs market time)
-textCountTimeDF.index = textCountTimeDF.index - DateOffset(hours=7)
+# then we subtract 8 hours to put us back in normal time (vs market time)
+textCountTimeDF.index = textCountTimeDF.index - DateOffset(hours=8)
 print(textCountTimeDF.head())
 # we create an hour column based on the index's hour
 textCountTimeDF['Hour'] = textCountTimeDF.index.hour
@@ -1053,16 +1053,32 @@ baselineLogRegScore = accuracy_score(yTest,
 rocAuc = roc_auc_score(yTest,
                        yPredProb)
 
-print("\nBASELINE LOGISTIC REGRESSION\nACCURACY SCORE:\n")
+baselineLogRegConfusionMatrix = confusion_matrix(yTest,
+                                                 yPred)
+
+print("\nBASELINE LOGISTIC CLASSIFICATION\nACCURACY SCORE:\n")
 print(baselineLogRegScore)
-print("\nBASELINE LOGISTIC REGRESSION\nAUC SCORES:\n")
+print("\nBASELINE LOGISTIC CLASSIFICATION\nAUC SCORES:\n")
 print(rocAuc)
-print("\nBASELINE LOGISTIC REGRESSION\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest,
-                       yPred))
-print("\nBASELINE LOGISTIC REGRESSION\nCLASSIFICATION REPORT:\n")
+print("\nBASELINE LOGISTIC CLASSIFICATION\nCONFUSION MATRIX:\n")
+print(baselineLogRegConfusionMatrix)
+print("\nBASELINE LOGISTIC CLASSIFICATION\nCLASSIFICATION REPORT:\n")
 print(classification_report(yTest,
                             yPred))
+
+# plot our confusion matrix
+sns.heatmap(baselineLogRegConfusionMatrix,
+            annot=True,
+            fmt='g',
+            vmin=0,
+            vmax=np.sum(baselineLogRegConfusionMatrix))
+plt.title('Baseline Logistic Classification Confusion Matrix')
+plt.xlabel('Predicted Values')
+plt.ylabel('Actual Values')
+plt.savefig(outputFilepath+r"\trumpVolatilityConfusionMatrixBaselineLogisticRegression.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # plot ROC curve for our model
 plt.plot([0, 1],
@@ -1073,7 +1089,7 @@ plt.plot(fpr,
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
-plt.title('ROC for Baseline Logistic Regression')
+plt.title('ROC for Baseline Logistic Classification')
 plt.savefig(outputFilepath+r"\trumpVolatilityROCBaselineLogisticRegression.jpeg",
             dpi=dpiSettings,
             bbox_inches='tight')
@@ -1082,7 +1098,7 @@ plt.close()
 # plot feature importance for the 20 most important features
 # create dataframe containing column names and feature coefficients
 featureImportance = pd.DataFrame({'variable' : xColNames,
-                                  'featureImportance' : baselineLogReg['logReg'].coef_[0]})
+                                  'featureImportance' : abs(baselineLogReg['logReg'].coef_[0])})
 
 # let's narrow this dataFrame down to the 20 most
 featureImportance = featureImportance.nlargest(20,
@@ -1092,11 +1108,11 @@ featureImportance = featureImportance.nlargest(20,
 plt.plot(featureImportance['variable'],
          featureImportance['featureImportance'])
 plt.title("Top twenty most important independent variables for\n"
-          "Baseline Logistic Regression Model\n"
-          "(coefficient values)")
+          "Baseline Logistic Classification Model\n"
+          "(coefficient absolute values)")
 plt.xlabel("Variable Name")
-plt.xticks(rotation=45)
-plt.ylabel("Coefficient Value")
+plt.xticks(rotation=90)
+plt.ylabel("Coefficient Absolute Value")
 plt.margins(0.02)
 plt.savefig(outputFilepath+r"\trumpVolatilityFeatureImportanceBaselineLogisticRegression.jpeg",
             dpi=dpiSettings,
@@ -1122,9 +1138,9 @@ plt.close()
 
 # create a parameter grid for our grid search CV
 paramGrid = {
-    'svd__estimator__n_components' : np.arange(40,
+    'svd__estimator__n_components' : np.arange(80,
                                                121,
-                                               2)
+                                               4)
 }
 
 # here is a list of tuples for our pipeline steps.
@@ -1195,16 +1211,32 @@ logRegSVDScore = accuracy_score(yTest,
 rocAuc = roc_auc_score(yTest,
                        yPredProb)
 
-print("\nLOGISTIC REGRESSION WITH SVD\nACCURACY SCORE:\n")
+logRegSVDConfusionMatrix = confusion_matrix(yTest,
+                                            yPred)
+
+print("\nLOGISTIC CLASSIFICATION WITH SVD\nACCURACY SCORE:\n")
 print(baselineLogRegScore)
-print("\nLOGISTIC REGRESSION WITH SVD\nAUC SCORES:\n")
+print("\nLOGISTIC CLASSIFICATION WITH SVD\nAUC SCORES:\n")
 print(rocAuc)
-print("\nLOGISTIC REGRESSION WITH SVD\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest,
-                       yPred))
-print("\nLOGISTIC REGRESSION WITH SVD\nCLASSIFICATION REPORT:\n")
+print("\nLOGISTIC CLASSIFICATION WITH SVD\nCONFUSION MATRIX:\n")
+print(logRegSVDConfusionMatrix)
+print("\nLOGISTIC CLASSIFICATION WITH SVD\nCLASSIFICATION REPORT:\n")
 print(classification_report(yTest,
                             yPred))
+
+# plot our confusion matrix
+sns.heatmap(logRegSVDConfusionMatrix,
+            annot=True,
+            fmt='g',
+            vmin=0,
+            vmax=np.sum(logRegSVDConfusionMatrix))
+plt.title('Logistic Classification with SVD Confusion Matrix')
+plt.xlabel('Predicted Values')
+plt.ylabel('Actual Values')
+plt.savefig(outputFilepath+r"\trumpVolatilityConfusionMatrixLogisticRegressionSVD.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # plot ROC curve for our model
 plt.plot([0, 1],
@@ -1215,16 +1247,16 @@ plt.plot(fpr,
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
-plt.title('ROC for Logistic Regression with SVD')
+plt.title('ROC for Logistic Classification with SVD')
 plt.savefig(outputFilepath+r"\trumpVolatilityROCBaselineLogisticRegressionWithSVD.jpeg",
             dpi=dpiSettings,
             bbox_inches='tight')
 plt.close()
 
 
-###################################
-# Tuned Logistic regression model #
-###################################
+#######################################
+# Tuned Logistic classification model #
+#######################################
 
 
 # this is a logistic regression with hyperparameter tuning
@@ -1282,19 +1314,35 @@ tunedLogRegScore = accuracy_score(yTest,
 rocAuc = roc_auc_score(yTest,
                        yPredProb)
 
+tunedLogRegConfusionMatrix = confusion_matrix(yTest,
+                                              yPred)
+
 # Print the tuned parameters and score
-print("TUNED LOGISTIC REGRESSION HYPERPARAMETERS: {}".format(tunedLogReg.best_params_))
+print("TUNED LOGISTIC CLASSIFICATION HYPERPARAMETERS: {}".format(tunedLogReg.best_params_))
 print("Best score is {}".format(tunedLogReg.best_score_))
-print("\nTUNED LOGISTIC REGRESSION\nACCURACY SCORE:\n")
+print("\nTUNED LOGISTIC CLASSIFICATION\nACCURACY SCORE:\n")
 print(tunedLogRegScore)
-print("\nTUNED LOGISTIC REGRESSION\nAUC SCORE:\n")
+print("\nTUNED LOGISTIC CLASSIFICATION\nAUC SCORE:\n")
 print(rocAuc)
-print("\nTUNED LOGISTIC REGRESSION\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest,
-                       yPred))
-print("\nTUNED LOGISTIC REGRESSION\nCLASSIFICATION REPORT:\n")
+print("\nTUNED LOGISTIC CLASSIFICATION\nCONFUSION MATRIX:\n")
+print(tunedLogRegConfusionMatrix)
+print("\nTUNED LOGISTIC CLASSIFICATION\nCLASSIFICATION REPORT:\n")
 print(classification_report(yTest,
                             yPred))
+
+# plot our confusion matrix
+sns.heatmap(tunedLogRegConfusionMatrix,
+            annot=True,
+            fmt='g',
+            vmin=0,
+            vmax=np.sum(tunedLogRegConfusionMatrix))
+plt.title('Tuned Logistic Classification Confusion Matrix')
+plt.xlabel('Predicted Values')
+plt.ylabel('Actual Values')
+plt.savefig(outputFilepath+r"\trumpVolatilityConfusionMatrixTunedLogisticRegression.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # plot ROC curve for our model
 plt.plot([0, 1],
@@ -1305,7 +1353,7 @@ plt.plot(fpr,
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
 plt.title('ROC Curve')
-plt.title('ROC for Tuned Logistic Regression')
+plt.title('ROC for Tuned Logistic Classification')
 plt.savefig(outputFilepath+r"/trumpVolatilityROCTunedLogisticRegression.jpeg",
             dpi=dpiSettings,
             bbox_inches='tight')
@@ -1371,6 +1419,9 @@ decisionTreeScore = accuracy_score(yTest,
 rocAuc = roc_auc_score(yTest,
                        yPredProb)
 
+decisionTreeConfusionMatrix = confusion_matrix(yTest,
+                                               yPred)
+
 # Print the tuned parameters and score
 print("TUNED DECISION TREE CLASSIFIER HYPERPARAMETERS: {}".format(decisionTree.best_params_))
 print("Best score is {}".format(decisionTree.best_score_))
@@ -1379,11 +1430,24 @@ print(decisionTreeScore)
 print("\nTUNED DECISION TREE CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
 print("\nTUNED DECISION TREE CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest,
-                       yPred))
+print(decisionTreeConfusionMatrix)
 print("\nTUNED DECISION TREE CLASSIFIER\nCLASSIFICATION REPORT:\n")
 print(classification_report(yTest,
                             yPred))
+
+# plot our confusion matrix
+sns.heatmap(decisionTreeConfusionMatrix,
+            annot=True,
+            fmt='g',
+            vmin=0,
+            vmax=np.sum(decisionTreeConfusionMatrix))
+plt.title('Tuned Decision Tree Confusion Matrix')
+plt.xlabel('Predicted Values')
+plt.ylabel('Actual Values')
+plt.savefig(outputFilepath+r"\trumpVolatilityConfusionMatrixDecisionTree.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # plot ROC curve for our model
 plt.plot([0, 1],
@@ -1456,6 +1520,9 @@ randomForestScore = accuracy_score(yTest,
 rocAuc = roc_auc_score(yTest,
                        yPredProb)
 
+randomForestConfusionMatrix = confusion_matrix(yTest,
+                                               yPred)
+
 # Print the tuned parameters and score
 print("TUNED RANDOM FOREST CLASSIFIER HYPERPARAMETERS: {}".format(randomForest.best_params_))
 print("Best score is {}".format(randomForest.best_score_))
@@ -1464,11 +1531,24 @@ print(randomForestScore)
 print("\nTUNED RANDOM FOREST CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
 print("\nTUNED RANDOM FOREST CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest,
-                       yPred))
+print(randomForestConfusionMatrix)
 print("\nTUNED RANDOM FOREST CLASSIFIER\nCLASSIFICATION REPORT:\n")
 print(classification_report(yTest,
                             yPred))
+
+# plot our confusion matrix
+sns.heatmap(randomForestConfusionMatrix,
+            annot=True,
+            fmt='g',
+            vmin=0,
+            vmax=np.sum(randomForestConfusionMatrix))
+plt.title('Tuned Random Forest Confusion Matrix')
+plt.xlabel('Predicted Values')
+plt.ylabel('Actual Values')
+plt.savefig(outputFilepath+r"\trumpVolatilityConfusionMatrixRandomForest.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # plot ROC curve for our model
 plt.plot([0, 1],
@@ -1539,6 +1619,9 @@ adaBoostScore = accuracy_score(yTest,
 rocAuc = roc_auc_score(yTest,
                        yPredProb)
 
+adaBoostConfusionMatrix = confusion_matrix(yTest,
+                                           yPred)
+
 # Print the tuned parameters and score
 print("TUNED ADABOOST CLASSIFIER HYPERPARAMETERS: {}".format(adaBoost.best_params_))
 print("Best score is {}".format(adaBoost.best_score_))
@@ -1547,11 +1630,24 @@ print(adaBoostScore)
 print("\nTUNED ADABOOST CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
 print("\nTUNED ADABOOST CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest,
-                       yPred))
+print(adaBoostConfusionMatrix)
 print("\nTUNED ADABOOST CLASSIFIER\nCLASSIFICATION REPORT:\n")
 print(classification_report(yTest,
                             yPred))
+
+# plot our confusion matrix
+sns.heatmap(adaBoostConfusionMatrix,
+            annot=True,
+            fmt='g',
+            vmin=0,
+            vmax=np.sum(adaBoostConfusionMatrix))
+plt.title('Tuned AdaBoost Classifier Confusion Matrix')
+plt.xlabel('Predicted Values')
+plt.ylabel('Actual Values')
+plt.savefig(outputFilepath+r"\trumpVolatilityConfusionMatrixAdaboost.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # plot ROC curve for our model
 plt.plot([0, 1],
@@ -1625,6 +1721,9 @@ gradientBoostScore = accuracy_score(yTest,
 rocAuc = roc_auc_score(yTest,
                        yPredProb)
 
+gradientBoostConfusionMatrix = confusion_matrix(yTest,
+                                                yPred)
+
 # Print the tuned parameters and score
 print("TUNED STOCHASTIC GRADIENT BOOSTED DECISION TREE CLASSIFIER HYPERPARAMETERS: {}".format(gradientBoost.best_params_))
 print("Best score is {}".format(gradientBoost.best_score_))
@@ -1633,11 +1732,24 @@ print(gradientBoostScore)
 print("\nTUNED STOCHASTIC GRADIENT BOOSTED DECISION TREE CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
 print("\nTUNED STOCHASTIC GRADIENT BOOSTED DECISION TREE CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest,
-                       yPred))
+print(gradientBoostConfusionMatrix)
 print("\nTUNED STOCHASTIC GRADIENT BOOSTED DECISION TREE CLASSIFIER\nCLASSIFICATION REPORT:\n")
 print(classification_report(yTest,
                             yPred))
+
+# plot our confusion matrix
+sns.heatmap(gradientBoostConfusionMatrix,
+            annot=True,
+            fmt='g',
+            vmin=0,
+            vmax=np.sum(gradientBoostConfusionMatrix))
+plt.title('Tuned Stochastic Gradient Boosted Decision Trees Confusion Matrix')
+plt.xlabel('Predicted Values')
+plt.ylabel('Actual Values')
+plt.savefig(outputFilepath+r"\trumpVolatilityConfusionMatrixGradientBoost.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # plot ROC curve for our model
 plt.plot([0, 1],
@@ -1741,17 +1853,33 @@ votingClassifierScore = accuracy_score(yTest,
 rocAuc = roc_auc_score(yTest,
                        yPredProb)
 
+votingClassifierConfusionMatrix = confusion_matrix(yTest,
+                                                   yPred)
+
 # Print the tuned parameters and score
 print("\nMODEL ENSEMBLE VOTING CLASSIFIER\nACCURACY SCORE:\n")
 print(decisionTreeScore)
 print("\nMODEL ENSEMBLE VOTING CLASSIFIER\nAUC SCORE:\n")
 print(rocAuc)
 print("\nMODEL ENSEMBLE VOTING CLASSIFIER\nCONFUSION MATRIX:\n")
-print(confusion_matrix(yTest,
-                       yPred))
+print(votingClassifierConfusionMatrix)
 print("\nMODEL ENSEMBLE VOTING CLASSIFIER\nCLASSIFICATION REPORT:\n")
 print(classification_report(yTest,
                             yPred))
+
+# plot our confusion matrix
+sns.heatmap(votingClassifierConfusionMatrix,
+            annot=True,
+            fmt='g',
+            vmin=0,
+            vmax=np.sum(votingClassifierConfusionMatrix))
+plt.title('Ensemble Voting Classifier Confusion Matrix')
+plt.xlabel('Predicted Values')
+plt.ylabel('Actual Values')
+plt.savefig(outputFilepath+r"\trumpVolatilityConfusionMatrixEnsembleVotingClassifier.jpeg",
+            dpi=dpiSettings,
+            bbox_inches='tight')
+plt.close()
 
 # plot ROC curve for our model
 plt.plot([0, 1],
